@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f3ee">
+  <title>100 DAYS｜やりたいを、できたに。</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 初回設定 -->
+  <section class="onboarding" id="onboarding" hidden aria-labelledby="onboarding-title">
+    <div class="onboarding-inner">
+      <p class="brand">100 DAYS</p>
+      <h1 class="onboarding-title" id="onboarding-title">今年の「やりたい」を<br>「できた」に変えよう。</h1>
+      <form class="onboarding-form" data-form="onboarding" novalidate>
+        <label class="field-label" for="onboarding-goal">まず、今年中に叶えたいことを<br>ひとつ決めてください。</label>
+        <input class="text-input" id="onboarding-goal" name="goal" type="text" maxlength="100" autocomplete="off"
+          placeholder="例：自分のWebサービスを公開する" aria-describedby="onboarding-error">
+        <p class="field-error" id="onboarding-error" role="alert" hidden></p>
+        <button class="button button--primary button--wide" type="submit">はじめる</button>
+      </form>
+    </div>
+  </section>
+
+  <div class="app" id="app" hidden>
+    <main class="main" id="main">
+
+      <!-- 今日 -->
+      <section class="view" id="view-today" data-view="today" aria-labelledby="today-heading">
+        <header class="today-header">
+          <div class="today-header-text">
+            <p class="brand">100 DAYS</p>
+            <h1 class="tagline" id="today-heading"><span>やりたいを、</span><span>できたに。</span></h1>
+            <p class="today-date" id="today-date"></p>
+            <p class="year-remaining" id="year-remaining"></p>
+          </div>
+          <div class="stamp" id="today-stamp" role="img"></div>
+        </header>
+
+        <div class="today-goal" id="today-goal"></div>
+        <div class="task-card" id="today-task"></div>
+        <div class="question-card" id="today-question"></div>
+      </section>
+
+      <!-- カレンダー -->
+      <section class="view" id="view-calendar" data-view="calendar" aria-labelledby="calendar-heading" hidden>
+        <h1 class="view-title" id="calendar-heading">カレンダー</h1>
+
+        <div class="calendar-nav">
+          <button class="icon-button" type="button" data-action="prev-month" aria-label="前の月">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <p class="calendar-month" id="calendar-month" aria-live="polite"></p>
+          <button class="icon-button" type="button" data-action="next-month" aria-label="次の月">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+        <div class="calendar-today-row" id="current-month-row" hidden>
+          <button class="button button--text" type="button" data-action="current-month" id="current-month-button">今月に戻る</button>
+        </div>
+
+        <div class="calendar">
+          <div class="calendar-weekdays" aria-hidden="true">
+            <span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span>
+          </div>
+          <div class="calendar-grid" id="calendar-grid"></div>
+        </div>
+
+        <ul class="calendar-legend">
+          <li><span class="legend-mark mark-task" aria-hidden="true"></span>やることを決めた</li>
+          <li><span class="legend-mark mark-done" aria-hidden="true">✓</span>できた</li>
+          <li><span class="legend-mark mark-answer" aria-hidden="true"></span>問いに答えた</li>
+        </ul>
+        <p class="calendar-hint">日付を押すと、その日の記録を見たり書いたりできます。</p>
+      </section>
+
+      <!-- ゴール -->
+      <section class="view" id="view-goal" data-view="goal" aria-labelledby="goal-heading" hidden>
+        <h1 class="view-title" id="goal-heading">ゴール</h1>
+
+        <div class="progress" id="goal-progress"></div>
+
+        <form class="goal-form" data-form="goal" novalidate>
+          <div class="field">
+            <label class="field-label" for="goal-title">今年、できたに変えたいこと</label>
+            <input class="text-input" id="goal-title" name="title" type="text" maxlength="100" autocomplete="off" aria-describedby="goal-error">
+            <p class="field-error" id="goal-error" role="alert" hidden></p>
+          </div>
+          <div class="field">
+            <label class="field-label" for="goal-reason">なぜやりたい？</label>
+            <textarea class="text-area" id="goal-reason" name="reason" rows="3" maxlength="500"></textarea>
+          </div>
+          <div class="field">
+            <label class="field-label" for="goal-feeling">できたら、どんな気持ち？</label>
+            <textarea class="text-area" id="goal-feeling" name="feeling" rows="3" maxlength="500"></textarea>
+          </div>
+          <button class="button button--primary button--wide" type="submit">保存する</button>
+        </form>
+
+        <div class="danger-zone">
+          <button class="button button--danger" type="button" data-action="reset-data">データをリセット</button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="画面の切り替え">
+      <button class="nav-button" type="button" data-action="navigate" data-target="today">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>
+        <span>今日</span>
+      </button>
+      <button class="nav-button" type="button" data-action="navigate" data-target="calendar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg>
+        <span>カレンダー</span>
+      </button>
+      <button class="nav-button" type="button" data-action="navigate" data-target="goal">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 20.5V4"/><path d="M6 4.5h11l-2.5 4 2.5 4H6"/></svg>
+        <span>ゴール</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- 日付の記録 -->
+  <dialog class="day-dialog" id="day-dialog" aria-labelledby="day-dialog-title">
+    <div class="day-dialog-inner">
+      <header class="day-dialog-header">
+        <h2 class="day-dialog-title" id="day-dialog-title"></h2>
+        <p class="day-dialog-sub" id="day-dialog-sub"></p>
+      </header>
+      <div id="day-dialog-body"></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
