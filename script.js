@@ -1,48 +1,14 @@
 "use strict";
 
 /* ==========================================================
-   設定・質問データ
+   設定
    ========================================================== */
 
 const STORAGE_KEY = "hundredDaysChallenge";
-const CHALLENGE_LENGTH = 100;
+const SCHEMA_VERSION = 3;
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
-
-const questions = [
-  "今日、一歩進んだことは？",
-  "今日やってよかったことは？",
-  "今日やらなくてもよかったことは？",
-  "明日の自分を少し楽にするなら？",
-  "今日ちょっと嬉しかったことは？",
-  "今日、自分のためにできたことは？",
-  "100日後の自分に少し近づけた？",
-  "今日気づいたことは？",
-  "今日、一番大切にしたことは？",
-  "今日の自分に一言かけるなら？",
-  "今日、思ったより簡単だったことは？",
-  "今日、手をつけられたことは？",
-  "今日、誰かに助けられたことは？",
-  "今日のやることを選んだ理由は？",
-  "今日、少しでも楽しめた瞬間は？",
-  "今日、うまくいったやり方は？",
-  "次に同じことをするなら、何を変えてみる？",
-  "今日の自分をほめるなら、どこ？",
-  "今日、ゴールについて考えた時間はあった？",
-  "今日、心が軽くなったことは？",
-  "今日、無理をしなかったことは？",
-  "今日、新しく知ったことは？",
-  "明日やることを、ひとつ思い浮かべるなら？",
-  "今日の自分に「ありがとう」と言うなら、何について？",
-  "今日、集中できたのはどんなとき？",
-  "今日、やってみたいと思えたことは？",
-  "今日、誰かに伝えたいことは？",
-  "今日、ゴールにつながりそうなものを見つけた？",
-  "今日、いつもと少し違うことをした？",
-  "今日、ほっとしたことは？",
-  "1週間前の自分と比べて、変わったことは？",
-  "今日の小さな「できた」は？",
-  "今日、自分らしかった瞬間は？"
-];
+const AREA_PLACEHOLDERS = ["例：ダイニングテーブル", "例：リビングの床", "例：クローゼット"];
+const FINAL_EASIER_CHOICES = ["物が減った", "探し物が減った", "片付けが早くなった", "戻しやすくなった", "まだよく分からない"];
 
 /* ==========================================================
    日付ユーティリティ（すべてローカル時間で扱う）
@@ -85,14 +51,27 @@ function addDays(dateKey, amount) {
   return formatLocalDate(date);
 }
 
-function getDaysUntilYearEnd(todayKey = getToday()) {
-  const year = todayKey.slice(0, 4);
-  return daysBetween(todayKey, `${year}-12-31`);
+/* 終了日は「開始日の3か月後の前日」。月末をまたぐ日は、その月の最終日にそろえる */
+function getChallengeEndDate(startKey) {
+  const [year, month, day] = startKey.split("-").map(Number);
+  const lastDayOfTarget = new Date(year, month - 1 + 4, 0).getDate();
+  const end = new Date(year, month - 1 + 3, Math.min(day, lastDayOfTarget));
+  end.setDate(end.getDate() - 1);
+  return formatLocalDate(end);
 }
 
 function getChallengeDay(todayKey = getToday()) {
-  if (!appData.startDate) return null;
-  return Math.max(1, daysBetween(appData.startDate, todayKey) + 1);
+  const challenge = appData.challenge;
+  if (!challenge) return null;
+  return Math.max(1, daysBetween(challenge.startDate, todayKey) + 1);
+}
+
+function getChallengeTotalDays(challenge) {
+  return daysBetween(challenge.startDate, challenge.endDate) + 1;
+}
+
+function isChallengeFinished(todayKey = getToday()) {
+  return Boolean(appData.challenge && todayKey >= appData.challenge.endDate);
 }
 
 function formatJapaneseDate(dateKey, withWeekday = true) {
@@ -101,14 +80,9 @@ function formatJapaneseDate(dateKey, withWeekday = true) {
   return withWeekday ? `${text}（${WEEKDAYS[date.getDay()]}）` : text;
 }
 
-function formatJapaneseFullDate(dateKey) {
-  return `${dateKey.slice(0, 4)}年${formatJapaneseDate(dateKey, false)}`;
-}
-
-/* 同じ日なら何度開いても同じ質問になる */
-function getQuestionForDate(dateKey) {
-  const count = questions.length;
-  return questions[((toDayNumber(dateKey) % count) + count) % count];
+function formatShortDate(dateKey) {
+  const date = parseDateKey(dateKey);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 /* ==========================================================
@@ -116,45 +90,155 @@ function getQuestionForDate(dateKey) {
    ========================================================== */
 
 function createEmptyData() {
-  return { goal: null, startDate: null, records: {} };
+  return { schemaVersion: SCHEMA_VERSION, goal: null, startDate: null, challenge: null, seasons: [], records: {} };
 }
 
 function toText(value) {
   return typeof value === "string" ? value : "";
 }
 
-/* 壊れたデータが入っていても、使える部分だけを取り出す */
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/* 壊れたデータが入っていても、使える部分だけを取り出す。旧データのフィールドは消さない */
 function normalizeData(raw) {
   const data = createEmptyData();
-  if (!raw || typeof raw !== "object") return data;
+  if (!isPlainObject(raw)) return data;
 
-  if (raw.goal && typeof raw.goal === "object" && toText(raw.goal.title).trim()) {
-    data.goal = {
-      title: raw.goal.title.trim(),
-      reason: toText(raw.goal.reason),
-      feeling: toText(raw.goal.feeling)
-    };
+  if (isPlainObject(raw.goal) && toText(raw.goal.title).trim()) {
+    data.goal = { title: raw.goal.title.trim(), reason: toText(raw.goal.reason), feeling: toText(raw.goal.feeling) };
   }
+  if (isValidDateKey(raw.startDate)) data.startDate = raw.startDate;
+  if (isPlainObject(raw.coach)) data.coach = raw.coach;
 
-  if (isValidDateKey(raw.startDate)) {
-    data.startDate = raw.startDate;
-  }
-
-  if (raw.records && typeof raw.records === "object") {
+  if (isPlainObject(raw.records)) {
     Object.keys(raw.records).forEach((dateKey) => {
-      const record = raw.records[dateKey];
-      if (!isValidDateKey(dateKey) || !record || typeof record !== "object") return;
-      const task = toText(record.task).trim();
-      data.records[dateKey] = {
-        task,
-        completed: Boolean(record.completed) && task !== "",
-        question: toText(record.question) || getQuestionForDate(dateKey),
-        answer: toText(record.answer)
-      };
+      const record = normalizeRecord(raw.records[dateKey]);
+      if (isValidDateKey(dateKey) && record) data.records[dateKey] = record;
     });
   }
 
+  data.challenge = normalizeChallenge(raw.challenge);
+  if (Array.isArray(raw.seasons)) data.seasons = raw.seasons.filter(isPlainObject);
+  if (data.challenge && !data.startDate) data.startDate = data.challenge.startDate;
   return data;
+}
+
+function normalizeRecord(raw) {
+  if (!isPlainObject(raw)) return null;
+  const record = { ...raw };
+  record.task = toText(raw.task).trim();
+  record.question = toText(raw.question);
+  record.answer = toText(raw.answer);
+
+  if (isPlainObject(raw.dailyOptions) && isValidOption(raw.dailyOptions.A) && isValidOption(raw.dailyOptions.B)) {
+    record.dailyOptions = { A: normalizeOption(raw.dailyOptions.A), B: normalizeOption(raw.dailyOptions.B) };
+    record.selectedOption = raw.selectedOption === "A" || raw.selectedOption === "B" ? raw.selectedOption : null;
+    record.resultStatus = record.selectedOption && RESULT_STATUSES.includes(raw.resultStatus) ? raw.resultStatus : null;
+    record.miniActive = Boolean(raw.miniActive) && Boolean(record.selectedOption);
+    record.usedMiniTask = Boolean(raw.usedMiniTask);
+    record.responseData = {};
+    if (isPlainObject(raw.responseData)) {
+      Object.keys(raw.responseData).forEach((key) => {
+        if (toText(raw.responseData[key])) record.responseData[key] = raw.responseData[key];
+      });
+    }
+    record.bQueue = Array.isArray(raw.bQueue)
+      ? raw.bQueue.filter((entry) => isPlainObject(entry) && getItemById(entry.id)).map((entry) => ({
+        id: entry.id,
+        size: ["normal", "smaller", "mini"].includes(entry.size) ? entry.size : "normal",
+        miniLevel: Number.isFinite(entry.miniLevel) ? entry.miniLevel : 0,
+        lead: toText(entry.lead)
+      }))
+      : [];
+    record.bIndex = Number.isInteger(raw.bIndex) && raw.bIndex >= 0 && raw.bIndex < record.bQueue.length ? raw.bIndex : 0;
+    record.bShown = Array.isArray(raw.bShown) ? raw.bShown.filter((id) => typeof id === "string") : [record.dailyOptions.B.itemId];
+    record.completed = record.resultStatus === "done" || record.resultStatus === "partial";
+  } else {
+    delete record.dailyOptions;
+    record.completed = Boolean(raw.completed) && record.task !== "";
+  }
+  return record;
+}
+
+function isValidOption(option) {
+  return isPlainObject(option) && typeof option.headline === "string" && option.headline !== "" && typeof option.kind === "string";
+}
+
+function normalizeFollowUp(raw) {
+  if (!isPlainObject(raw) || !toText(raw.key) || !toText(raw.label)) return null;
+  return {
+    key: raw.key,
+    label: raw.label,
+    type: raw.type === "choice" ? "choice" : "text",
+    choices: Array.isArray(raw.choices) ? raw.choices.filter((choice) => typeof choice === "string") : [],
+    requiredOnDone: Boolean(raw.requiredOnDone)
+  };
+}
+
+function normalizeOption(raw) {
+  const option = {
+    ...raw,
+    lead: toText(raw.lead),
+    details: Array.isArray(raw.details) ? raw.details.filter((line) => typeof line === "string") : [],
+    finish: toText(raw.finish),
+    estimatedMinutes: Number.isFinite(raw.estimatedMinutes) ? raw.estimatedMinutes : 5,
+    title: toText(raw.title) || (raw.slot === "B" ? TITLES.item.normal : TITLES.step),
+    followUp: normalizeFollowUp(raw.followUp)
+  };
+  option.mini = isPlainObject(raw.mini) && toText(raw.mini.headline)
+    ? {
+      ...raw.mini,
+      lead: toText(raw.mini.lead),
+      details: Array.isArray(raw.mini.details) ? raw.mini.details.filter((line) => typeof line === "string") : [],
+      finish: toText(raw.mini.finish),
+      estimatedMinutes: Number.isFinite(raw.mini.estimatedMinutes) ? raw.mini.estimatedMinutes : 2,
+      followUp: normalizeFollowUp(raw.mini.followUp)
+    }
+    : null;
+  return option;
+}
+
+function normalizeChallenge(raw) {
+  if (!isPlainObject(raw) || !isValidDateKey(raw.startDate) || !Array.isArray(raw.areas)) return null;
+
+  const areas = raw.areas
+    .filter((area) => isPlainObject(area) && toText(area.id) && toText(area.name).trim())
+    .slice(0, MAX_AREAS)
+    .map((area) => ({
+      id: area.id,
+      name: area.name.trim(),
+      status: ["active", "done", "upcoming"].includes(area.status) ? area.status : "upcoming",
+      startedDate: isValidDateKey(area.startedDate) ? area.startedDate : null,
+      completedDate: isValidDateKey(area.completedDate) ? area.completedDate : null,
+      lastReviewedDate: isValidDateKey(area.lastReviewedDate) ? area.lastReviewedDate : null
+    }));
+  if (!areas.length) return null;
+
+  const challenge = {
+    ...raw,
+    type: CHALLENGE_TYPE,
+    mode: "cleanup",
+    startDate: raw.startDate,
+    endDate: isValidDateKey(raw.endDate) && raw.endDate > raw.startDate ? raw.endDate : getChallengeEndDate(raw.startDate),
+    primaryProblem: PROBLEMS.some((item) => item.value === raw.primaryProblem) ? raw.primaryProblem : "too_much",
+    targetOutcome: OUTCOMES.some((item) => item.value === raw.targetOutcome) ? raw.targetOutcome : "clear_surfaces",
+    targetOutcomeCustom: toText(raw.targetOutcomeCustom),
+    areas,
+    finalReview: isPlainObject(raw.finalReview) ? raw.finalReview : null,
+    resting: Boolean(raw.resting)
+  };
+
+  const current = areas.find((area) => area.id === raw.currentAreaId && area.status !== "done")
+    || areas.find((area) => area.status === "active")
+    || areas.find((area) => area.status === "upcoming");
+  challenge.currentAreaId = current ? current.id : null;
+  areas.forEach((area) => {
+    if (area.status === "done") return;
+    area.status = area.id === challenge.currentAreaId ? "active" : "upcoming";
+  });
+  return challenge;
 }
 
 function loadData() {
@@ -175,6 +259,7 @@ function loadData() {
 
 function saveData() {
   try {
+    appData.schemaVersion = SCHEMA_VERSION;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
     return true;
   } catch (error) {
@@ -196,24 +281,6 @@ function getRecord(dateKey) {
   return appData.records[dateKey] || null;
 }
 
-function updateRecord(dateKey, changes) {
-  const current = getRecord(dateKey) || {
-    task: "",
-    completed: false,
-    question: getQuestionForDate(dateKey),
-    answer: ""
-  };
-  const next = { ...current, ...changes };
-  if (!next.task) next.completed = false;
-
-  if (!next.task && !next.answer) {
-    delete appData.records[dateKey];
-  } else {
-    appData.records[dateKey] = next;
-  }
-  return saveData();
-}
-
 /* ==========================================================
    状態・要素
    ========================================================== */
@@ -224,33 +291,31 @@ const ui = {
   view: "today",
   calendarYear: new Date().getFullYear(),
   calendarMonth: new Date().getMonth(),
-  isEditingTodayTask: false,
   dialogDateKey: null,
   renderedToday: getToday(),
-  toastTimer: null
+  toastTimer: null,
+  isEditingPlan: false,
+  onboarding: null
 };
 
 const el = {
   onboarding: document.getElementById("onboarding"),
+  onboardingBody: document.getElementById("onboarding-body"),
   app: document.getElementById("app"),
   views: document.querySelectorAll("[data-view]"),
   navButtons: document.querySelectorAll(".nav-button"),
 
   todayDate: document.getElementById("today-date"),
-  yearRemaining: document.getElementById("year-remaining"),
+  challengeRemaining: document.getElementById("challenge-remaining"),
   todayStamp: document.getElementById("today-stamp"),
-  todayGoal: document.getElementById("today-goal"),
-  todayTask: document.getElementById("today-task"),
-  todayQuestion: document.getElementById("today-question"),
+  todayArea: document.getElementById("today-area"),
+  todayBody: document.getElementById("today-body"),
 
   calendarMonth: document.getElementById("calendar-month"),
   calendarGrid: document.getElementById("calendar-grid"),
   currentMonthRow: document.getElementById("current-month-row"),
 
-  goalProgress: document.getElementById("goal-progress"),
-  goalTitle: document.getElementById("goal-title"),
-  goalReason: document.getElementById("goal-reason"),
-  goalFeeling: document.getElementById("goal-feeling"),
+  planBody: document.getElementById("plan-body"),
 
   dayDialog: document.getElementById("day-dialog"),
   dayDialogTitle: document.getElementById("day-dialog-title"),
@@ -280,29 +345,41 @@ function showToast(message) {
   ui.toastTimer = setTimeout(() => el.toast.classList.remove("is-visible"), 2200);
 }
 
-function showFieldError(errorElement, input, message) {
+function showFormError(form, message, focusTarget) {
+  const errorElement = form.querySelector(".field-error");
   errorElement.textContent = message;
   errorElement.hidden = false;
-  input.setAttribute("aria-invalid", "true");
-  input.focus();
+  if (focusTarget) focusTarget.focus();
 }
 
-function clearFieldError(errorElement, input) {
+function clearFormError(form) {
+  const errorElement = form.querySelector(".field-error");
+  if (!errorElement) return;
   errorElement.textContent = "";
   errorElement.hidden = true;
-  input.removeAttribute("aria-invalid");
+}
+
+function getLabel(list, value) {
+  const found = list.find((item) => item.value === value);
+  return found ? found.label : "";
+}
+
+function getOutcomeText(challenge) {
+  if (challenge.targetOutcome === "other") return challenge.targetOutcomeCustom || "その他";
+  return getLabel(OUTCOMES, challenge.targetOutcome);
+}
+
+function renderRadioCards(name, items, currentValue, idPrefix) {
+  return items.map((item, index) => `
+    <label class="status-option" for="${idPrefix}-${index}">
+      <input type="radio" id="${idPrefix}-${index}" name="${name}" value="${escapeHtml(item.value)}"${item.value === currentValue ? " checked" : ""}>
+      <span>${escapeHtml(item.label)}</span>
+    </label>`).join("");
 }
 
 /* ==========================================================
    画面の切り替え
    ========================================================== */
-
-function showOnboarding() {
-  el.app.hidden = true;
-  el.onboarding.hidden = false;
-  document.getElementById("onboarding-goal").value = "";
-  document.getElementById("onboarding-goal").focus();
-}
 
 function showApp() {
   el.onboarding.hidden = true;
@@ -318,7 +395,7 @@ function showView(viewName) {
 
   if (viewName === "today") renderToday();
   if (viewName === "calendar") renderCalendar();
-  if (viewName === "goal") renderGoal();
+  if (viewName === "plan") renderPlan();
 
   window.scrollTo(0, 0);
 }
@@ -334,172 +411,664 @@ function renderNavigation() {
 }
 
 /* ==========================================================
+   初回オンボーディング（場所 → 困りごと → 3か月後の理想）
+   ========================================================== */
+
+function startOnboarding() {
+  ui.onboarding = { step: "areas", areas: [""], firstIndex: 0, problem: "", outcome: "", outcomeCustom: "" };
+  el.app.hidden = true;
+  el.onboarding.hidden = false;
+  renderOnboarding();
+}
+
+function renderOnboarding() {
+  const state = ui.onboarding;
+  const renderers = {
+    areas: renderOnboardingAreas,
+    first: renderOnboardingFirst,
+    problem: renderOnboardingProblem,
+    outcome: renderOnboardingOutcome
+  };
+  el.onboardingBody.innerHTML = renderers[state.step](state);
+  window.scrollTo(0, 0);
+  const focusTarget = el.onboardingBody.querySelector("h1");
+  if (focusTarget) {
+    focusTarget.setAttribute("tabindex", "-1");
+    focusTarget.focus();
+  }
+}
+
+function renderOnboardingHeader(stepNumber, titleHtml, leadText, showHistoryNote = false) {
+  const hasHistory = Object.keys(appData.records).length > 0 || appData.seasons.length > 0;
+  return `
+    <p class="brand">3 MONTHS</p>
+    <p class="onboarding-step">${stepNumber} / 3</p>
+    <h1 class="onboarding-title">${titleHtml}</h1>
+    ${leadText ? `<p class="onboarding-lead">${leadText}</p>` : ""}
+    ${hasHistory && showHistoryNote ? '<p class="onboarding-note">これまでの記録は、カレンダーにそのまま残っています。</p>' : ""}`;
+}
+
+function renderOnboardingAreas(state) {
+  const inputs = state.areas.map((value, index) => `
+    <div class="field">
+      <label class="field-label" for="ob-area-${index}">${index === 0 ? "気になる場所" : `気になる場所（${index + 1}つめ）`}</label>
+      <input class="text-input" id="ob-area-${index}" name="area" type="text" maxlength="40" autocomplete="off"
+        placeholder="${AREA_PLACEHOLDERS[index]}" value="${escapeHtml(value)}">
+    </div>`).join("");
+
+  return `
+    ${renderOnboardingHeader(1, "<span>この3か月で、</span><span>どこを変えたい？</span>", "気になる場所を最大3つ。<br>1か所からでも始められます。", true)}
+    <form class="onboarding-form" data-form="ob-areas" novalidate>
+      ${inputs}
+      ${state.areas.length < MAX_AREAS ? '<button class="button button--text add-area-button" type="button" data-action="ob-add-area">＋ もう1か所追加</button>' : ""}
+      <p class="field-error" role="alert" hidden></p>
+      <button class="button button--primary button--wide" type="submit">次へ</button>
+    </form>`;
+}
+
+function renderOnboardingFirst(state) {
+  const names = state.areas.filter(Boolean);
+  const items = names.map((name, index) => ({ value: String(index), label: name }));
+  return `
+    ${renderOnboardingHeader(1, "<span>まず、</span><span>どこから始める？</span>", "ほかの場所は、あとから順番に進めます。")}
+    <form class="onboarding-form" data-form="ob-first" novalidate>
+      <fieldset class="status-group">
+        <legend class="visually-hidden">最初に取り組む場所</legend>
+        ${renderRadioCards("first", items, String(state.firstIndex), "ob-first")}
+      </fieldset>
+      <p class="field-error" role="alert" hidden></p>
+      <div class="onboarding-actions">
+        <button class="button button--text" type="button" data-action="ob-back" data-step="areas">戻る</button>
+        <button class="button button--primary" type="submit">次へ</button>
+      </div>
+    </form>`;
+}
+
+function renderOnboardingProblem(state) {
+  return `
+    ${renderOnboardingHeader(2, "<span>片付けで、</span><span>一番困って</span><span>いることは？</span>", "")}
+    <form class="onboarding-form" data-form="ob-problem" novalidate>
+      <fieldset class="status-group">
+        <legend class="visually-hidden">一番困っていること</legend>
+        ${renderRadioCards("problem", PROBLEMS, state.problem, "ob-problem")}
+      </fieldset>
+      <p class="field-error" role="alert" hidden></p>
+      <div class="onboarding-actions">
+        <button class="button button--text" type="button" data-action="ob-back" data-step="${state.areas.filter(Boolean).length > 1 ? "first" : "areas"}">戻る</button>
+        <button class="button button--primary" type="submit">次へ</button>
+      </div>
+    </form>`;
+}
+
+function renderOnboardingOutcome(state) {
+  return `
+    ${renderOnboardingHeader(3, "<span>3か月後、</span><span>どうなって</span><span>いたら嬉しい？</span>", "")}
+    <form class="onboarding-form" data-form="ob-outcome" novalidate>
+      <fieldset class="status-group">
+        <legend class="visually-hidden">3か月後の理想</legend>
+        ${renderRadioCards("outcome", OUTCOMES, state.outcome, "ob-outcome")}
+      </fieldset>
+      <div class="field" id="ob-outcome-custom-field"${state.outcome === "other" ? "" : " hidden"}>
+        <label class="field-label" for="ob-outcome-custom">どうなっていたら嬉しい？</label>
+        <input class="text-input" id="ob-outcome-custom" name="outcomeCustom" type="text" maxlength="60" autocomplete="off" value="${escapeHtml(state.outcomeCustom)}">
+      </div>
+      <p class="field-error" role="alert" hidden></p>
+      <div class="onboarding-actions">
+        <button class="button button--text" type="button" data-action="ob-back" data-step="problem">戻る</button>
+        <button class="button button--primary" type="submit">この3か月をはじめる</button>
+      </div>
+    </form>`;
+}
+
+function readOnboardingAreas() {
+  const inputs = el.onboardingBody.querySelectorAll('input[name="area"]');
+  if (inputs.length) ui.onboarding.areas = [...inputs].map((input) => input.value.trim());
+}
+
+function addOnboardingArea() {
+  readOnboardingAreas();
+  if (ui.onboarding.areas.length >= MAX_AREAS) return;
+  ui.onboarding.areas.push("");
+  renderOnboarding();
+  const inputs = el.onboardingBody.querySelectorAll('input[name="area"]');
+  inputs[inputs.length - 1].focus();
+}
+
+function submitOnboardingAreas(form) {
+  readOnboardingAreas();
+  const names = ui.onboarding.areas.filter(Boolean);
+  if (!names.length) {
+    showFormError(form, "気になる場所を1つ入力してください", form.querySelector('input[name="area"]'));
+    return;
+  }
+  ui.onboarding.areas = names;
+  ui.onboarding.firstIndex = Math.min(ui.onboarding.firstIndex, names.length - 1);
+  ui.onboarding.step = names.length > 1 ? "first" : "problem";
+  renderOnboarding();
+}
+
+function submitOnboardingChoice(form, name, nextStep, message) {
+  const checked = form.querySelector(`input[name="${name}"]:checked`);
+  if (!checked) {
+    showFormError(form, message, form.querySelector(`input[name="${name}"]`));
+    return null;
+  }
+  ui.onboarding.step = nextStep;
+  return checked.value;
+}
+
+function submitOnboardingFirst(form) {
+  const value = submitOnboardingChoice(form, "first", "problem", "最初の場所をひとつ選んでください");
+  if (value === null) return;
+  ui.onboarding.firstIndex = Number(value);
+  renderOnboarding();
+}
+
+function submitOnboardingProblem(form) {
+  const value = submitOnboardingChoice(form, "problem", "outcome", "ひとつ選んでください");
+  if (value === null) return;
+  ui.onboarding.problem = value;
+  renderOnboarding();
+}
+
+function submitOnboardingOutcome(form) {
+  const checked = form.querySelector('input[name="outcome"]:checked');
+  const custom = form.elements.outcomeCustom.value.trim();
+  if (!checked) {
+    showFormError(form, "ひとつ選んでください", form.querySelector('input[name="outcome"]'));
+    return;
+  }
+  if (checked.value === "other" && !custom) {
+    showFormError(form, "どうなっていたら嬉しいか、ひとことで書いてください", form.elements.outcomeCustom);
+    return;
+  }
+  ui.onboarding.outcome = checked.value;
+  ui.onboarding.outcomeCustom = checked.value === "other" ? custom : "";
+  startChallenge(ui.onboarding);
+}
+
+function startChallenge(state) {
+  const todayKey = getToday();
+  const areas = state.areas.map((name, index) => ({
+    id: `area-${index + 1}`,
+    name,
+    status: index === state.firstIndex ? "active" : "upcoming",
+    startedDate: index === state.firstIndex ? todayKey : null,
+    completedDate: null,
+    lastReviewedDate: null
+  }));
+
+  appData.challenge = {
+    type: CHALLENGE_TYPE,
+    mode: "cleanup",
+    startDate: todayKey,
+    endDate: getChallengeEndDate(todayKey),
+    primaryProblem: state.problem,
+    targetOutcome: state.outcome,
+    targetOutcomeCustom: state.outcomeCustom,
+    currentAreaId: areas[state.firstIndex].id,
+    areas,
+    finalReview: null,
+    resting: false
+  };
+  if (!appData.startDate) appData.startDate = todayKey;
+  if (!saveData()) return;
+
+  ui.onboarding = null;
+  showApp();
+  showView("today");
+}
+
+function handleOnboardingBack(step) {
+  if (ui.onboarding.step === "areas") return;
+  ui.onboarding.step = step;
+  renderOnboarding();
+}
+
+/* ==========================================================
    今日
    ========================================================== */
 
 function renderToday() {
   const todayKey = getToday();
   ui.renderedToday = todayKey;
+  ensureTodayOptions(todayKey);
   renderTodayHeader(todayKey);
-  renderTodayGoal();
-  renderTodayTask(todayKey);
-  renderTodayQuestion(todayKey);
+  renderTodayArea();
+
+  if (isChallengeFinished(todayKey)) {
+    el.todayBody.innerHTML = renderFinalView();
+    return;
+  }
+  const record = getRecord(todayKey);
+  if (!record || !isChallengeRecord(record)) {
+    el.todayBody.innerHTML = "";
+    return;
+  }
+  el.todayBody.innerHTML = record.selectedOption ? renderSelectedView(record) : renderChoiceView(record);
+}
+
+/* 今日の A/B は、その日の記録がないときに1回だけ作って保存する */
+function ensureTodayOptions(todayKey) {
+  const challenge = appData.challenge;
+  if (!challenge || todayKey < challenge.startDate || isChallengeFinished(todayKey)) return;
+  const existing = getRecord(todayKey);
+  if (existing && isChallengeRecord(existing)) return;
+
+  updateAreaState(appData, todayKey);
+  const options = generateDailyOptions(appData, todayKey);
+  const record = {
+    task: "",
+    completed: false,
+    question: "",
+    answer: "",
+    dailyOptions: { A: options.A, B: options.B },
+    selectedOption: null,
+    resultStatus: null,
+    miniActive: false,
+    usedMiniTask: false,
+    responseData: {},
+    bQueue: options.bQueue,
+    bIndex: options.bIndex,
+    bShown: options.bShown,
+    coachMeta: { source: COACH_SOURCE, seasonStartDate: challenge.startDate }
+  };
+  /* 旧バージョンで今日の記録がすでにある場合は、消さずに残しておく */
+  if (existing) {
+    record.legacyRecord = { ...existing };
+  }
+  appData.records[todayKey] = record;
+  saveData();
 }
 
 function renderTodayHeader(todayKey) {
-  const challengeDay = getChallengeDay(todayKey);
-  const remaining = getDaysUntilYearEnd(todayKey);
+  const challenge = appData.challenge;
   const record = getRecord(todayKey);
-
   el.todayDate.textContent = formatJapaneseDate(todayKey);
-  el.yearRemaining.textContent = remaining > 0 ? `今年はあと${remaining}日` : "今日が今年最後の日";
 
-  if (challengeDay && challengeDay > CHALLENGE_LENGTH) {
-    el.todayStamp.innerHTML =
-      '<span class="stamp-label">100 DAYS</span><span class="stamp-number stamp-number--small">COMPLETE</span>';
-    el.todayStamp.setAttribute("aria-label", `100日チャレンジ達成。今日は${challengeDay}日目`);
-  } else {
-    const day = challengeDay || 1;
-    el.todayStamp.innerHTML = `<span class="stamp-label">DAY</span><span class="stamp-number">${day}</span>`;
-    el.todayStamp.setAttribute("aria-label", `チャレンジ${day}日目`);
+  if (isChallengeFinished(todayKey)) {
+    el.challengeRemaining.textContent = "3か月が終わりました";
+    el.todayStamp.innerHTML = '<span class="stamp-label">3 MONTHS</span><span class="stamp-number stamp-number--small">COMPLETE</span>';
+    el.todayStamp.setAttribute("aria-label", "3か月を終えました");
+    el.todayStamp.classList.add("is-inked");
+    return;
   }
+
+  const day = getChallengeDay(todayKey) || 1;
+  const remaining = daysBetween(todayKey, challenge.endDate);
+  el.challengeRemaining.textContent = remaining > 0 ? `あと${remaining}日` : "今日が最終日";
+  el.todayStamp.innerHTML = `<span class="stamp-label">DAY</span><span class="stamp-number">${day}</span>`;
+  el.todayStamp.setAttribute("aria-label", `${day}日目`);
   el.todayStamp.classList.toggle("is-inked", Boolean(record && record.completed));
 }
 
-function renderTodayGoal() {
-  if (appData.goal) {
-    el.todayGoal.innerHTML = `
-      <p class="goal-label">今年中に叶えたいこと</p>
-      <p class="goal-title">${escapeHtml(appData.goal.title)}</p>`;
-  } else {
-    el.todayGoal.innerHTML = `
-      <div class="goal-empty">
-        <p class="goal-title">今年中に叶えたいことを決めよう</p>
-        <button class="button button--secondary" type="button" data-action="navigate" data-target="goal">ゴールを決める</button>
+function renderTodayArea() {
+  const challenge = appData.challenge;
+  const current = getCurrentArea(challenge);
+  if (isChallengeFinished()) {
+    el.todayArea.hidden = true;
+    return;
+  }
+  el.todayArea.hidden = false;
+  el.todayArea.innerHTML = current
+    ? `<p class="goal-label">今取り組んでいる場所</p><p class="goal-title">${escapeHtml(current.name)}</p>`
+    : '<p class="goal-label">重点エリア</p><p class="goal-title">すべて一区切りしました</p>';
+}
+
+function renderOptionCard(record, slot) {
+  const option = record.dailyOptions[slot];
+  const canRotate = slot === "B" && (record.bQueue || []).length > 1;
+  return `
+    <div class="option-card">
+      <button class="option-select" type="button" data-action="select-option" data-slot="${slot}"
+        aria-label="${slot}を選ぶ：${escapeHtml(option.title)}。${escapeHtml(option.headline)}。目安${option.estimatedMinutes}分">
+        <span class="option-slot" aria-hidden="true">${slot}</span>
+        <span class="option-body">
+          <span class="option-title">${escapeHtml(option.title)}</span>
+          ${option.lead ? `<span class="option-lead">${escapeHtml(option.lead)}</span>` : ""}
+          <span class="option-headline">${escapeHtml(option.headline)}</span>
+          <span class="option-minutes">目安：${option.estimatedMinutes}分</span>
+        </span>
+      </button>
+      ${canRotate ? '<div class="option-extra"><button class="button button--text button--small" type="button" data-action="rotate-item">別のモノにする</button></div>' : ""}
+    </div>`;
+}
+
+function renderChoiceView(record) {
+  return `
+    <section class="choice" aria-labelledby="choice-heading">
+      <h2 class="choice-heading" id="choice-heading">今日はどっちにする？</h2>
+      <div class="option-list">
+        ${renderOptionCard(record, "A")}
+        ${renderOptionCard(record, "B")}
+      </div>
+    </section>`;
+}
+
+function renderInstructionHtml(option) {
+  return `
+    ${option.lead ? `<p class="coach-lead">${escapeHtml(option.lead)}</p>` : ""}
+    <p class="task-text">${escapeHtml(option.headline)}</p>
+    ${option.details.length ? `<div class="coach-details">${option.details.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}</div>` : ""}
+    ${option.finish ? `<p class="coach-finish">${escapeHtml(option.finish)}</p>` : ""}
+    <p class="coach-minutes">目安：${option.estimatedMinutes}分</p>`;
+}
+
+function renderSelectedView(record) {
+  const option = getSelectedEffectiveOption(record);
+  const base = record.dailyOptions[record.selectedOption];
+  const locked = Boolean(record.resultStatus);
+  let actions = "";
+  if (!locked) {
+    actions = `
+      <div class="task-card-actions">
+        ${record.miniActive
+          ? '<button class="button button--text" type="button" data-action="restore-normal">通常版に戻す</button>'
+          : '<button class="button button--text" type="button" data-action="use-mini-task">今日はちょっと無理</button>'}
+        <button class="button button--text" type="button" data-action="reselect">選び直す</button>
       </div>`;
   }
-}
 
-function renderTodayTask(todayKey) {
-  const record = getRecord(todayKey);
-  const hasTask = Boolean(record && record.task);
-
-  el.todayTask.classList.toggle("is-done", hasTask && record.completed && !ui.isEditingTodayTask);
-
-  if (!hasTask || ui.isEditingTodayTask) {
-    const value = hasTask ? record.task : "";
-    el.todayTask.innerHTML = `
-      <form class="task-form" data-form="today-task" novalidate>
-        <label class="task-heading" for="today-task-input">今日、何をひとつやる？</label>
-        <input class="text-input" id="today-task-input" name="task" type="text" maxlength="100"
-          autocomplete="off" placeholder="例：トップページの見出しを30分直す"
-          value="${escapeHtml(value)}" aria-describedby="today-task-error">
-        <p class="field-error" id="today-task-error" role="alert" hidden></p>
-        <div class="button-row">
-          <button class="button button--primary" type="submit">${hasTask ? "変更する" : "今日やることにする"}</button>
-          ${hasTask ? '<button class="button button--text" type="button" data-action="cancel-edit-task">キャンセル</button>' : ""}
-        </div>
-      </form>`;
-    return;
-  }
-
-  el.todayTask.innerHTML = `
-    <p class="task-heading">今日やること</p>
-    <p class="task-text">${escapeHtml(record.task)}</p>
-    <div class="task-actions">
-      <button class="check-button" type="button" data-action="toggle-complete" aria-pressed="${record.completed}">
-        <span class="check-box" aria-hidden="true">✓</span>できた
-      </button>
-      <button class="button button--text" type="button" data-action="edit-task">編集</button>
-    </div>
-    ${record.completed ? '<p class="task-done-note">できました。おつかれさまでした。</p>' : ""}`;
-}
-
-function renderTodayQuestion(todayKey) {
-  const record = getRecord(todayKey);
-  const question = (record && record.question) || getQuestionForDate(todayKey);
-  const answer = record ? record.answer : "";
-
-  el.todayQuestion.innerHTML = `
-    <form class="question-form" data-form="today-answer" novalidate>
-      <p class="question-kicker">今日の1問</p>
-      <label class="question-text" for="today-answer-input">${escapeHtml(question)}</label>
-      <textarea class="text-area" id="today-answer-input" name="answer" rows="4" maxlength="1000"
-        aria-describedby="today-answer-error">${escapeHtml(answer)}</textarea>
-      <p class="field-error" id="today-answer-error" role="alert" hidden></p>
-      <div class="button-row">
-        <button class="button button--secondary" type="submit">記録する</button>
-        ${answer ? '<span class="saved-note">記録済み</span>' : ""}
+  return `
+    <div class="task-card${record.completed ? " is-done" : ""}">
+      <div class="task-card-top">
+        <p class="task-heading">今日やること</p>
+        <p class="option-chip">${record.selectedOption}　${escapeHtml(base.title)}${record.miniActive ? "（小さい版）" : ""}</p>
       </div>
-    </form>`;
+      ${renderInstructionHtml(option)}
+      ${actions}
+    </div>
+    <div class="question-card">
+      <form class="question-form" data-form="today-result" novalidate>
+        <p class="question-kicker">終わったら教えて</p>
+        ${renderResultFields(record, option, "today", "どうだった？")}
+        <p class="field-error" role="alert" hidden></p>
+        <div class="button-row">
+          <button class="button button--primary" type="submit">今日の記録を保存</button>
+        </div>
+        ${record.resultStatus ? `<p class="coach-saved" role="status">${getSavedMessage(record.resultStatus)}</p>` : ""}
+      </form>
+    </div>`;
 }
 
-function saveTodayTask(form) {
-  const input = form.elements.task;
-  const errorElement = form.querySelector(".field-error");
-  const task = input.value.trim();
+/* 結果の3択と、必要なときだけの追加の1問 */
+function renderResultFields(record, option, idPrefix, legend) {
+  const statusItems = RESULT_STATUSES.map((status) => ({ value: status, label: RESULT_LABELS[status] }));
+  const followUp = option.followUp;
+  let followUpHtml = "";
 
-  if (!task) {
-    showFieldError(errorElement, input, "今日やることをひとつ決めてください");
-    return;
+  if (followUp) {
+    const visible = record.resultStatus && record.resultStatus !== "not_done";
+    const input = followUp.type === "choice"
+      ? `<fieldset class="chip-group">
+          <legend class="field-label">${escapeHtml(followUp.label)}</legend>
+          ${followUp.choices.map((choice, index) => `
+            <label class="chip" for="${idPrefix}-fu-${index}">
+              <input type="radio" id="${idPrefix}-fu-${index}" name="answerChoice" value="${escapeHtml(choice)}"${record.answer === choice ? " checked" : ""}>
+              <span>${escapeHtml(choice)}</span>
+            </label>`).join("")}
+        </fieldset>`
+      : `<label class="field-label" for="${idPrefix}-answer">${escapeHtml(followUp.label)}</label>
+        <input class="text-input" id="${idPrefix}-answer" name="answer" type="text" maxlength="60" autocomplete="off" value="${escapeHtml(record.answer)}">`;
+    followUpHtml = `<div class="field result-followup"${visible ? "" : " hidden"}>${input}</div>`;
   }
-  clearFieldError(errorElement, input);
 
-  const wasEditing = ui.isEditingTodayTask;
-  const todayKey = getToday();
-  if (!updateRecord(todayKey, { task })) return;
-
-  ui.isEditingTodayTask = false;
-  renderTodayTask(todayKey);
-  renderTodayHeader(todayKey);
-  el.todayTask.querySelector('[data-action="toggle-complete"]').focus();
-  showToast(wasEditing ? "変更しました" : "今日やることを決めました");
+  return `
+    <fieldset class="status-group">
+      <legend class="question-text">${legend}</legend>
+      ${renderRadioCards("status", statusItems, record.resultStatus, `${idPrefix}-status`)}
+    </fieldset>
+    ${followUpHtml}`;
 }
 
-function toggleTaskComplete() {
+function getSavedMessage(status) {
+  return status === "not_done" ? "今日はここまでで大丈夫。次はもっと小さくします。" : "今日も一歩進みました";
+}
+
+function selectDailyOption(slot) {
   const todayKey = getToday();
   const record = getRecord(todayKey);
-  if (!record || !record.task) return;
+  if (!isChallengeRecord(record) || record.resultStatus) return;
 
-  if (!updateRecord(todayKey, { completed: !record.completed })) return;
-
-  renderTodayTask(todayKey);
-  renderTodayHeader(todayKey);
-  el.todayTask.querySelector('[data-action="toggle-complete"]').focus();
+  record.selectedOption = slot;
+  record.miniActive = false;
+  syncRecordText(record);
+  if (!saveData()) return;
+  renderToday();
+  focusTaskText();
 }
 
-function startEditTodayTask() {
-  ui.isEditingTodayTask = true;
-  renderTodayTask(getToday());
-  const input = document.getElementById("today-task-input");
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
+function reselectOption() {
+  const record = getRecord(getToday());
+  if (!isChallengeRecord(record) || record.resultStatus) return;
+  record.selectedOption = null;
+  record.miniActive = false;
+  syncRecordText(record);
+  if (!saveData()) return;
+  renderToday();
+  const heading = document.getElementById("choice-heading");
+  heading.setAttribute("tabindex", "-1");
+  heading.focus();
 }
 
-function cancelEditTodayTask() {
-  ui.isEditingTodayTask = false;
-  renderTodayTask(getToday());
-  el.todayTask.querySelector('[data-action="edit-task"]').focus();
+function rotateTodayItem() {
+  const record = getRecord(getToday());
+  if (!isChallengeRecord(record) || record.selectedOption) return;
+  const next = rotateItemMenu(record);
+  if (!next) return;
+  record.dailyOptions.B = next.B;
+  record.bIndex = next.bIndex;
+  record.bShown = next.bShown;
+  if (!saveData()) return;
+  renderToday();
+  const button = el.todayBody.querySelector('[data-action="rotate-item"]');
+  if (button) button.focus();
+  showToast(`${next.B.itemName}にしました`);
 }
 
-function saveDailyAnswer(form) {
-  const input = form.elements.answer;
-  const errorElement = form.querySelector(".field-error");
-  const answer = input.value.trim();
-  const todayKey = getToday();
-  const record = getRecord(todayKey);
+/* 「今日はちょっと無理」：選んだ指示を小さい版にする */
+function createMiniTask() {
+  const record = getRecord(getToday());
+  if (!isChallengeRecord(record) || !record.selectedOption || record.resultStatus) return;
+  if (!record.dailyOptions[record.selectedOption].mini) return;
+  record.miniActive = true;
+  record.usedMiniTask = true;
+  syncRecordText(record);
+  if (!saveData()) return;
+  renderToday();
+  focusTaskText();
+  showToast("小さい版にしました");
+}
 
-  if (!answer) {
-    showFieldError(errorElement, input, "ひとことでも大丈夫です。思ったことを書いてみてください");
-    return;
+function restoreNormalTask() {
+  const record = getRecord(getToday());
+  if (!isChallengeRecord(record) || record.resultStatus) return;
+  record.miniActive = false;
+  syncRecordText(record);
+  if (!saveData()) return;
+  renderToday();
+  focusTaskText();
+  showToast("通常版に戻しました");
+}
+
+function focusTaskText() {
+  const text = el.todayBody.querySelector(".task-text");
+  if (!text) return;
+  text.setAttribute("tabindex", "-1");
+  text.focus();
+}
+
+/* 旧UIやカレンダーとの互換のため、task / question も合わせて保存する */
+function syncRecordText(record) {
+  const option = getSelectedEffectiveOption(record);
+  record.task = option ? optionToText(option) : "";
+  record.question = option && option.followUp ? option.followUp.label : "";
+  record.completed = record.resultStatus === "done" || record.resultStatus === "partial";
+}
+
+function readResultForm(form) {
+  const checked = form.querySelector('input[name="status"]:checked');
+  const choice = form.querySelector('input[name="answerChoice"]:checked');
+  const text = form.elements.answer ? form.elements.answer.value.trim() : "";
+  return { status: checked ? checked.value : "", answer: choice ? choice.value : text };
+}
+
+function validateResult(option, status, answer) {
+  if (!status) return "どうだったか、ひとつ選んでください";
+  if (status === "done" && option.followUp && option.followUp.requiredOnDone && !answer) return "決めた場所を書いてください";
+  return "";
+}
+
+function saveDailyResult(dateKey, status, answer) {
+  const record = getRecord(dateKey);
+  const option = getSelectedEffectiveOption(record);
+  const savedAnswer = status === "not_done" ? "" : answer;
+
+  record.resultStatus = status;
+  record.answer = savedAnswer;
+  record.responseData = savedAnswer && option.followUp ? { [option.followUp.key]: savedAnswer } : {};
+  syncRecordText(record);
+  updateAreaState(appData, getToday());
+  return saveData();
+}
+
+function submitResultForm(form, dateKey) {
+  const record = getRecord(dateKey);
+  if (!isChallengeRecord(record) || !record.selectedOption) return false;
+  const option = getSelectedEffectiveOption(record);
+  const { status, answer } = readResultForm(form);
+  const message = validateResult(option, status, answer);
+  if (message) {
+    const target = status ? form.querySelector('.result-followup input') : form.querySelector('input[name="status"]');
+    showFormError(form, message, target);
+    return false;
   }
-  clearFieldError(errorElement, input);
+  clearFormError(form);
+  return saveDailyResult(dateKey, status, answer);
+}
 
-  const question = (record && record.question) || getQuestionForDate(todayKey);
-  if (!updateRecord(todayKey, { answer, question })) return;
+function saveTodayResult(form) {
+  const todayKey = getToday();
+  if (!submitResultForm(form, todayKey)) return;
+  renderTodayHeader(todayKey);
+  renderTodayArea();
+  el.todayBody.innerHTML = renderSelectedView(getRecord(todayKey));
+  const saved = el.todayBody.querySelector(".coach-saved");
+  if (saved) {
+    saved.setAttribute("tabindex", "-1");
+    saved.focus();
+  }
+}
 
-  renderTodayQuestion(todayKey);
-  showToast("記録しました");
+function handleStatusChange(input) {
+  const form = input.closest("form");
+  const followUp = form && form.querySelector(".result-followup");
+  if (followUp) followUp.hidden = input.value === "not_done";
+}
+
+/* ==========================================================
+   3か月の終わり（最終振り返り・次の3か月）
+   ========================================================== */
+
+function renderFinalView() {
+  const challenge = appData.challenge;
+  if (challenge.resting) {
+    return `
+      <div class="task-card final-card">
+        <p class="task-heading">おやすみ中</p>
+        <p class="task-text">今はお休み中です。また始めたくなったら、いつでもどうぞ。</p>
+        <div class="button-row final-actions">
+          <button class="button button--primary" type="button" data-action="start-next-season">次の3か月を始める</button>
+        </div>
+      </div>`;
+  }
+  if (challenge.finalReview) {
+    return `
+      <div class="task-card final-card">
+        <p class="task-heading">3か月のふり返り</p>
+        <p class="task-text">3か月、おつかれさまでした。</p>
+        <p class="coach-details">ふり返りを保存しました。次の3か月も、同じように小さく続けられます。</p>
+        ${renderFinalSummary(challenge.finalReview)}
+        <div class="button-row final-actions">
+          <button class="button button--primary" type="button" data-action="start-next-season">次の3か月を始める</button>
+          <button class="button button--text" type="button" data-action="rest-season">いったん休む</button>
+        </div>
+      </div>`;
+  }
+
+  const areaItems = challenge.areas.map((area) => ({ value: area.name, label: area.name }));
+  return `
+    <div class="task-card final-card">
+      <p class="task-heading">3か月のふり返り</p>
+      <p class="task-text">3か月、おつかれさまでした。</p>
+      <p class="coach-details">答えられるところだけで大丈夫です。</p>
+      <form class="final-form" data-form="final-review" novalidate>
+        <fieldset class="chip-group">
+          <legend class="field-label">一番変わった場所は？</legend>
+          ${areaItems.map((item, index) => renderChip("bestArea", item.value, `final-area-${index}`)).join("")}
+        </fieldset>
+        <fieldset class="chip-group">
+          <legend class="field-label">前よりラクになったことは？</legend>
+          ${FINAL_EASIER_CHOICES.map((choice, index) => renderChip("easier", choice, `final-easier-${index}`)).join("")}
+        </fieldset>
+        <div class="field">
+          <label class="field-label" for="final-keep">これからも続けたい仕組みは？</label>
+          <input class="text-input" id="final-keep" name="keep" type="text" maxlength="80" autocomplete="off" placeholder="例：プリントは白いボックスに戻す">
+        </div>
+        <button class="button button--primary button--wide" type="submit">ふり返りを保存</button>
+      </form>
+    </div>`;
+}
+
+function renderChip(name, value, id) {
+  return `
+    <label class="chip" for="${id}">
+      <input type="radio" id="${id}" name="${name}" value="${escapeHtml(value)}">
+      <span>${escapeHtml(value)}</span>
+    </label>`;
+}
+
+function renderFinalSummary(review) {
+  const rows = [
+    ["一番変わった場所", review.bestArea],
+    ["ラクになったこと", review.easier],
+    ["続けたい仕組み", review.keep]
+  ].filter(([, value]) => value);
+  if (!rows.length) return "";
+  return `<dl class="plan-facts">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
+}
+
+function saveFinalReview(form) {
+  const pick = (name) => {
+    const checked = form.querySelector(`input[name="${name}"]:checked`);
+    return checked ? checked.value : "";
+  };
+  appData.challenge.finalReview = {
+    bestArea: pick("bestArea"),
+    easier: pick("easier"),
+    keep: form.elements.keep.value.trim(),
+    savedDate: getToday()
+  };
+  if (!saveData()) return;
+  renderToday();
+  showToast("ふり返りを保存しました");
+}
+
+function restSeason() {
+  appData.challenge.resting = true;
+  if (!saveData()) return;
+  renderToday();
+}
+
+/* 今の3か月を seasons に残して、新しい3か月の設定へ */
+function startNextSeason() {
+  const challenge = appData.challenge;
+  if (challenge) {
+    appData.seasons.push({ ...challenge, archivedDate: getToday() });
+    appData.challenge = null;
+  }
+  if (!saveData()) return;
+  startOnboarding();
 }
 
 /* ==========================================================
@@ -520,20 +1089,31 @@ function renderCalendar() {
   for (let i = 0; i < firstWeekday; i += 1) {
     cells.push('<span aria-hidden="true"></span>');
   }
-
   for (let day = 1; day <= daysInMonth; day += 1) {
     const dateKey = formatLocalDate(new Date(year, month, day));
     cells.push(renderCalendarDay(dateKey, day, todayKey));
   }
-
   el.calendarGrid.innerHTML = cells.join("");
 }
 
+function getDayState(record) {
+  if (!record) return null;
+  if (isChallengeRecord(record)) {
+    if (record.resultStatus === "done") return { className: "is-done", mark: '<span class="mark-done">✓</span>', label: "できた" };
+    if (record.resultStatus === "partial") return { className: "is-partial", mark: '<span class="mark-partial">✓</span>', label: "少しできた" };
+    if (record.resultStatus === "not_done") return { className: "", mark: '<span class="mark-task"></span>', label: "今日はできなかった" };
+    if (record.selectedOption) return { className: "", mark: '<span class="mark-task"></span>', label: "選んだ" };
+    return null;
+  }
+  if (record.task && record.completed) return { className: "is-done", mark: '<span class="mark-done">✓</span>', label: "できた（以前の記録）" };
+  if (record.task || record.answer) return { className: "", mark: '<span class="mark-task"></span>', label: "以前の記録" };
+  return null;
+}
+
 function renderCalendarDay(dateKey, day, todayKey) {
-  const record = getRecord(dateKey);
   const classes = ["cal-day"];
   const states = [];
-  const marks = [];
+  let mark = "";
 
   if (dateKey === todayKey) {
     classes.push("is-today");
@@ -541,28 +1121,19 @@ function renderCalendarDay(dateKey, day, todayKey) {
   }
   if (dateKey > todayKey) classes.push("is-future");
 
-  if (record && record.task) {
-    if (record.completed) {
-      classes.push("is-done");
-      marks.push('<span class="mark-done">✓</span>');
-      states.push("できた");
-    } else {
-      marks.push('<span class="mark-task"></span>');
-      states.push("やることを決めた");
-    }
-  }
-  if (record && record.answer) {
-    marks.push('<span class="mark-answer"></span>');
-    states.push("問いに答えた");
+  const state = getDayState(getRecord(dateKey));
+  if (state) {
+    if (state.className) classes.push(state.className);
+    mark = state.mark;
+    states.push(state.label);
   }
 
   const label = [formatJapaneseDate(dateKey), ...states].join("、");
-
   return `
     <button class="${classes.join(" ")}" type="button" data-action="open-day" data-date="${dateKey}"
       aria-label="${escapeHtml(label)}"${dateKey === todayKey ? ' aria-current="date"' : ""}>
       <span class="cal-date">${day}</span>
-      <span class="cal-marks" aria-hidden="true">${marks.join("")}</span>
+      <span class="cal-marks" aria-hidden="true">${mark}</span>
     </button>`;
 }
 
@@ -580,27 +1151,30 @@ function resetCalendarToCurrentMonth() {
 }
 
 /* ==========================================================
-   日付の詳細・編集
+   日付の詳細
    ========================================================== */
 
 function openDayDetail(dateKey) {
   const todayKey = getToday();
   const record = getRecord(dateKey);
-  const isFuture = dateKey > todayKey;
 
   ui.dialogDateKey = dateKey;
   el.dayDialogTitle.textContent = formatJapaneseDate(dateKey);
   el.dayDialogSub.textContent = getDialogSubtitle(dateKey, todayKey);
-  el.dayDialogBody.innerHTML = isFuture
-    ? renderFutureDayBody(record)
-    : renderDayForm(dateKey, record, dateKey === todayKey);
+
+  if (dateKey > todayKey) {
+    el.dayDialogBody.innerHTML = renderFutureDayBody();
+  } else if (isChallengeRecord(record)) {
+    el.dayDialogBody.innerHTML = renderChallengeDayBody(record, dateKey === todayKey);
+  } else {
+    el.dayDialogBody.innerHTML = renderLegacyDayBody(record);
+  }
 
   if (typeof el.dayDialog.showModal === "function") {
     el.dayDialog.showModal();
   } else {
     el.dayDialog.setAttribute("open", "");
   }
-
   const firstField = el.dayDialogBody.querySelector("input, textarea, button");
   if (firstField) firstField.focus();
 }
@@ -608,53 +1182,84 @@ function openDayDetail(dateKey) {
 function getDialogSubtitle(dateKey, todayKey) {
   const parts = [];
   if (dateKey === todayKey) parts.push("今日");
-  if (appData.startDate && dateKey >= appData.startDate) {
-    const day = daysBetween(appData.startDate, dateKey) + 1;
-    parts.push(day <= CHALLENGE_LENGTH ? `DAY ${day}` : `${day}日目`);
+  const challenge = appData.challenge;
+  if (challenge && dateKey >= challenge.startDate && dateKey < challenge.endDate) {
+    parts.push(`DAY ${daysBetween(challenge.startDate, dateKey) + 1}`);
   }
   return parts.join("　");
 }
 
-function renderFutureDayBody(record) {
-  const recordHtml = record
-    ? `
-      ${record.task ? `<div><p class="readonly-label">やること</p><p class="readonly-value">${escapeHtml(record.task)}</p></div>` : ""}
-      ${record.answer ? `<div><p class="readonly-label">回答</p><p class="readonly-value">${escapeHtml(record.answer)}</p></div>` : ""}`
-    : "";
-
+function renderCloseOnly() {
   return `
-    <div class="readonly-block">
-      <p class="readonly-note">この日はまだ先です。記録はその日になったら書けます。<br>今日のことに集中しましょう。</p>
-      ${recordHtml}
-      <div class="dialog-actions">
-        <button class="button button--secondary" type="button" data-action="close-dialog">閉じる</button>
-      </div>
+    <div class="dialog-actions">
+      <button class="button button--secondary" type="button" data-action="close-dialog">閉じる</button>
     </div>`;
 }
 
-function renderDayForm(dateKey, record, isToday) {
-  const task = record ? record.task : "";
-  const completed = Boolean(record && record.completed);
-  const answer = record ? record.answer : "";
-  const question = (record && record.question) || getQuestionForDate(dateKey);
-
+function renderFutureDayBody() {
+  const message = appData.challenge
+    ? "この日の片付けは、それまでの記録をもとに決まります。"
+    : "この日はまだ先です。";
   return `
-    <form class="day-form" data-form="day-record" novalidate>
-      <div class="field">
-        <label class="field-label" for="day-task">${isToday ? "今日やること" : "この日やること"}</label>
-        <input class="text-input" id="day-task" name="task" type="text" maxlength="100" autocomplete="off"
-          value="${escapeHtml(task)}" aria-describedby="day-error">
+    <div class="readonly-block">
+      <p class="readonly-note">${message}</p>
+      ${renderCloseOnly()}
+    </div>`;
+}
+
+function renderLegacyBlock(legacy) {
+  if (!legacy || (!legacy.task && !legacy.answer)) return "";
+  return `
+    <div class="legacy-block">
+      <p class="readonly-label">以前のバージョンの記録</p>
+      ${legacy.task ? `<p class="readonly-value">${escapeHtml(legacy.task)}</p>` : ""}
+      ${legacy.task ? `<p class="readonly-value">結果：${legacy.completed ? "できた" : "記録なし"}</p>` : ""}
+      ${legacy.answer ? `<p class="readonly-value">回答：${escapeHtml(legacy.answer)}</p>` : ""}
+    </div>`;
+}
+
+function renderLegacyDayBody(record) {
+  if (!record || (!record.task && !record.answer)) {
+    return `
+      <div class="readonly-block">
+        <p class="readonly-note">この日の記録はありません。</p>
+        ${renderCloseOnly()}
+      </div>`;
+  }
+  return `
+    <div class="readonly-block">
+      ${renderLegacyBlock(record)}
+      <p class="readonly-note">以前のバージョンの記録は、見るだけになります。</p>
+      ${renderCloseOnly()}
+    </div>`;
+}
+
+/* A/B と選んだ指示は履歴として変更しない。結果と回答だけ直せる */
+function renderChallengeDayBody(record, isToday) {
+  if (!record.selectedOption) {
+    return `
+      <div class="readonly-block">
+        <p class="readonly-note">${isToday ? "今日はまだ選んでいません。" : "この日は選ばれませんでした。"}</p>
+        <div><p class="readonly-label">A　${escapeHtml(record.dailyOptions.A.title)}</p><p class="readonly-value">${escapeHtml(record.dailyOptions.A.headline)}</p></div>
+        <div><p class="readonly-label">B　${escapeHtml(record.dailyOptions.B.title)}</p><p class="readonly-value">${escapeHtml(record.dailyOptions.B.headline)}</p></div>
+        ${renderLegacyBlock(record.legacyRecord)}
+        ${renderCloseOnly()}
+      </div>`;
+  }
+
+  const option = getSelectedEffectiveOption(record);
+  const base = record.dailyOptions[record.selectedOption];
+  return `
+    <form class="day-form" data-form="day-result" novalidate>
+      <div class="coach-history">
+        <p class="readonly-label">選んだもの</p>
+        <p class="readonly-value">${record.selectedOption}　${escapeHtml(base.title)}${record.miniActive ? "（小さい版）" : ""}</p>
+        <p class="readonly-label history-gap">${isToday ? "今日の指示" : "この日の指示"}</p>
+        <p class="readonly-value">${escapeHtml(option.headline)}</p>
       </div>
-      <div class="check-field">
-        <input id="day-completed" name="completed" type="checkbox"${completed ? " checked" : ""}>
-        <label for="day-completed">できた</label>
-      </div>
-      <p class="field-error" id="day-error" role="alert" hidden></p>
-      <div class="field">
-        <p class="readonly-label">${isToday ? "今日の問い" : "この日の問い"}</p>
-        <label class="question-text" for="day-answer">${escapeHtml(question)}</label>
-        <textarea class="text-area" id="day-answer" name="answer" rows="4" maxlength="1000">${escapeHtml(answer)}</textarea>
-      </div>
+      ${renderResultFields(record, option, "day", "結果")}
+      <p class="field-error" role="alert" hidden></p>
+      ${renderLegacyBlock(record.legacyRecord)}
       <div class="dialog-actions">
         <button class="button button--text" type="button" data-action="close-dialog">閉じる</button>
         <button class="button button--primary" type="submit">保存する</button>
@@ -662,29 +1267,12 @@ function renderDayForm(dateKey, record, isToday) {
     </form>`;
 }
 
-function saveDayRecord(form) {
+function saveDayResult(form) {
   const dateKey = ui.dialogDateKey;
   if (!dateKey || dateKey > getToday()) return;
-
-  const taskInput = form.elements.task;
-  const errorElement = form.querySelector("#day-error");
-  const task = taskInput.value.trim();
-  const completed = form.elements.completed.checked;
-  const answer = form.elements.answer.value.trim();
-
-  if (completed && !task) {
-    showFieldError(errorElement, taskInput, "「できた」にするには、やることを入力してください");
-    return;
-  }
-  clearFieldError(errorElement, taskInput);
-
-  const record = getRecord(dateKey);
-  const question = (record && record.question) || getQuestionForDate(dateKey);
-  if (!updateRecord(dateKey, { task, completed, answer, question })) return;
-
+  if (!submitResultForm(form, dateKey)) return;
   closeDayDetail();
   renderCalendar();
-  if (dateKey === getToday()) ui.isEditingTodayTask = false;
   showToast("保存しました");
 }
 
@@ -697,7 +1285,6 @@ function closeDayDetail() {
   } else {
     el.dayDialog.removeAttribute("open");
   }
-
   if (openedDate) {
     const dayButton = el.calendarGrid.querySelector(`[data-date="${openedDate}"]`);
     if (dayButton) dayButton.focus();
@@ -705,105 +1292,188 @@ function closeDayDetail() {
 }
 
 /* ==========================================================
-   ゴール
+   3か月画面
    ========================================================== */
 
-function renderGoal() {
-  const goal = appData.goal || { title: "", reason: "", feeling: "" };
-  el.goalTitle.value = goal.title;
-  el.goalReason.value = goal.reason;
-  el.goalFeeling.value = goal.feeling;
-  clearFieldError(document.getElementById("goal-error"), el.goalTitle);
-  renderProgress();
-}
-
-function renderProgress() {
-  const todayKey = getToday();
-  const challengeDay = getChallengeDay(todayKey) || 1;
-  const records = Object.entries(appData.records);
-  const doneCount = records.filter(([, record]) => record.completed).length;
-  const writtenCount = records.length;
-
-  const daysHtml = challengeDay > CHALLENGE_LENGTH
-    ? "100 DAYS COMPLETE"
-    : `${challengeDay} <small>/ ${CHALLENGE_LENGTH} DAYS</small>`;
-
-  const cells = [];
-  if (appData.startDate) {
-    for (let i = 0; i < CHALLENGE_LENGTH; i += 1) {
-      const dateKey = addDays(appData.startDate, i);
-      const record = getRecord(dateKey);
-      const classes = [];
-      if (dateKey <= todayKey) classes.push("is-passed");
-      if (record && record.completed) classes.push("is-done");
-      if (dateKey === todayKey) classes.push("is-today");
-      cells.push(`<span class="${classes.join(" ")}"></span>`);
-    }
-  }
-
-  el.goalProgress.innerHTML = `
-    <p class="progress-days">${daysHtml}</p>
-    <dl class="progress-stats">
-      <div><dt>できた日</dt><dd>${doneCount}日</dd></div>
-      <div><dt>記録した日</dt><dd>${writtenCount}日</dd></div>
-    </dl>
-    ${cells.length ? `<div class="day-grid" aria-hidden="true">${cells.join("")}</div>` : ""}
-    ${appData.startDate ? `<p class="progress-start">はじめた日　${formatJapaneseFullDate(appData.startDate)}</p>` : ""}`;
-}
-
-function saveGoal(form) {
-  const errorElement = document.getElementById("goal-error");
-  const title = el.goalTitle.value.trim();
-
-  if (!title) {
-    showFieldError(errorElement, el.goalTitle, "今年叶えたいことを入力してください");
+function renderPlan() {
+  const challenge = appData.challenge;
+  if (!challenge) {
+    el.planBody.innerHTML = "";
     return;
   }
-  clearFieldError(errorElement, el.goalTitle);
+  el.planBody.innerHTML = ui.isEditingPlan ? renderPlanEdit(challenge) : renderPlanSummary(challenge);
+}
 
-  appData.goal = {
-    title,
-    reason: el.goalReason.value.trim(),
-    feeling: el.goalFeeling.value.trim()
-  };
-  if (!appData.startDate) appData.startDate = getToday();
+function renderPlanSummary(challenge) {
+  const todayKey = getToday();
+  const total = getChallengeTotalDays(challenge);
+  const elapsed = Math.min(total, Math.max(0, daysBetween(challenge.startDate, todayKey) + 1));
+  const remaining = Math.max(0, daysBetween(todayKey, challenge.endDate));
+  const percent = Math.round((elapsed / total) * 100);
+
+  const areaRows = challenge.areas.map((area) => {
+    const mark = { done: "✓", active: "●", upcoming: "○" }[area.status];
+    return `
+      <li class="area-row area-row--${area.status}">
+        <span class="area-mark" aria-hidden="true">${mark}</span>
+        <span class="area-name">${escapeHtml(area.name)}</span>
+        <span class="area-status">${AREA_STATUS_LABELS[area.status]}</span>
+      </li>`;
+  }).join("");
+
+  return `
+    <div class="progress">
+      <p class="plan-label">期間</p>
+      <p class="plan-period">${formatShortDate(challenge.startDate)} → ${formatShortDate(challenge.endDate)}</p>
+      <div class="progress-bar" role="img" aria-label="3か月のうち${elapsed}日目"><span style="width:${percent}%"></span></div>
+      <dl class="progress-stats">
+        <div><dt>経過</dt><dd>${elapsed}日</dd></div>
+        <div><dt>残り</dt><dd>${remaining}日</dd></div>
+      </dl>
+    </div>
+
+    <section class="plan-section" aria-labelledby="plan-areas-title">
+      <h2 class="plan-section-title" id="plan-areas-title">重点エリア</h2>
+      <ul class="area-list">${areaRows}</ul>
+    </section>
+
+    <dl class="plan-facts">
+      <div><dt>一番の困りごと</dt><dd>${escapeHtml(getLabel(PROBLEMS, challenge.primaryProblem))}</dd></div>
+      <div><dt>3か月後</dt><dd>${escapeHtml(getOutcomeText(challenge))}</dd></div>
+    </dl>
+
+    <button class="button button--secondary button--wide" type="button" data-action="edit-plan">プランを編集する</button>`;
+}
+
+function renderPlanEdit(challenge) {
+  const areaFields = [];
+  for (let index = 0; index < MAX_AREAS; index += 1) {
+    const area = challenge.areas[index];
+    const locked = area && area.status !== "upcoming";
+    areaFields.push(`
+      <div class="field">
+        <label class="field-label" for="plan-area-${index}">場所${index + 1}${area ? `（${AREA_STATUS_LABELS[area.status]}）` : ""}</label>
+        <input class="text-input" id="plan-area-${index}" name="area-${index}" type="text" maxlength="40" autocomplete="off"
+          value="${area ? escapeHtml(area.name) : ""}" placeholder="${area ? "" : "追加する場合は入力"}"
+          ${locked ? 'data-required="true"' : ""}>
+      </div>`);
+  }
+
+  const selectable = challenge.areas.filter((area) => area.status !== "done")
+    .map((area) => ({ value: area.id, label: area.name }));
+
+  return `
+    <form class="goal-form" data-form="plan-edit" novalidate>
+      <fieldset class="plan-fieldset">
+        <legend class="plan-section-title">重点エリア</legend>
+        ${areaFields.join("")}
+      </fieldset>
+      ${selectable.length > 1 ? `
+        <fieldset class="status-group">
+          <legend class="field-label">今取り組む場所</legend>
+          ${renderRadioCards("currentArea", selectable, challenge.currentAreaId, "plan-current")}
+        </fieldset>` : ""}
+      <fieldset class="status-group">
+        <legend class="field-label">一番の困りごと</legend>
+        ${renderRadioCards("problem", PROBLEMS, challenge.primaryProblem, "plan-problem")}
+      </fieldset>
+      <fieldset class="status-group">
+        <legend class="field-label">3か月後</legend>
+        ${renderRadioCards("outcome", OUTCOMES, challenge.targetOutcome, "plan-outcome")}
+      </fieldset>
+      <div class="field" id="plan-outcome-custom-field"${challenge.targetOutcome === "other" ? "" : " hidden"}>
+        <label class="field-label" for="plan-outcome-custom">どうなっていたら嬉しい？</label>
+        <input class="text-input" id="plan-outcome-custom" name="outcomeCustom" type="text" maxlength="60" autocomplete="off" value="${escapeHtml(challenge.targetOutcomeCustom)}">
+      </div>
+      <p class="setting-note">開始日（${formatJapaneseDate(challenge.startDate, false)}）は変更できません。</p>
+      <p class="field-error" role="alert" hidden></p>
+      <div class="onboarding-actions">
+        <button class="button button--text" type="button" data-action="cancel-plan">キャンセル</button>
+        <button class="button button--primary" type="submit">保存する</button>
+      </div>
+    </form>`;
+}
+
+function savePlan(form) {
+  const challenge = appData.challenge;
+  const todayKey = getToday();
+  const names = [];
+  for (let index = 0; index < MAX_AREAS; index += 1) {
+    names.push(form.elements[`area-${index}`].value.trim());
+  }
+
+  const lockedEmpty = challenge.areas.some((area, index) => area.status !== "upcoming" && !names[index]);
+  if (lockedEmpty) {
+    showFormError(form, "整え中・一区切りの場所は、名前を空にできません", form.querySelector("input[data-required]"));
+    return;
+  }
+  const outcome = form.querySelector('input[name="outcome"]:checked');
+  const custom = form.elements.outcomeCustom.value.trim();
+  if (outcome && outcome.value === "other" && !custom) {
+    showFormError(form, "どうなっていたら嬉しいか、ひとことで書いてください", form.elements.outcomeCustom);
+    return;
+  }
+
+  const areas = [];
+  names.forEach((name, index) => {
+    const existing = challenge.areas[index];
+    if (existing && name) areas.push({ ...existing, name });
+    if (!existing && name) {
+      areas.push({ id: getNewAreaId(challenge), name, status: "upcoming", startedDate: null, completedDate: null, lastReviewedDate: null });
+    }
+  });
+  challenge.areas = areas;
+
+  const chosen = form.querySelector('input[name="currentArea"]:checked');
+  const nextCurrentId = chosen ? chosen.value : challenge.currentAreaId;
+  setCurrentArea(challenge, nextCurrentId, todayKey);
+
+  const problem = form.querySelector('input[name="problem"]:checked');
+  if (problem) challenge.primaryProblem = problem.value;
+  if (outcome) {
+    challenge.targetOutcome = outcome.value;
+    challenge.targetOutcomeCustom = outcome.value === "other" ? custom : "";
+  }
   if (!saveData()) return;
 
-  renderGoal();
+  ui.isEditingPlan = false;
+  renderPlan();
   showToast("保存しました");
+}
+
+function getNewAreaId(challenge) {
+  let number = challenge.areas.length + 1;
+  while (challenge.areas.some((area) => area.id === `area-${number}`)) number += 1;
+  return `area-${number}`;
+}
+
+function setCurrentArea(challenge, areaId, todayKey) {
+  let target = challenge.areas.find((area) => area.id === areaId && area.status !== "done");
+  if (!target) target = challenge.areas.find((area) => area.status === "active") || challenge.areas.find((area) => area.status === "upcoming");
+  challenge.areas.forEach((area) => {
+    if (area.status === "done") return;
+    if (target && area.id === target.id) {
+      area.status = "active";
+      if (!area.startedDate) area.startedDate = todayKey;
+    } else {
+      area.status = "upcoming";
+    }
+  });
+  challenge.currentAreaId = target ? target.id : null;
+}
+
+function handleOutcomeChange(input) {
+  const field = document.getElementById("ob-outcome-custom-field") || document.getElementById("plan-outcome-custom-field");
+  if (field) field.hidden = input.value !== "other";
 }
 
 function resetAllData() {
   const confirmed = window.confirm("すべての記録を削除しますか？\nこの操作は元に戻せません。");
   if (!confirmed) return;
-
   clearData();
-  ui.isEditingTodayTask = false;
+  ui.isEditingPlan = false;
   resetCalendarToCurrentMonth();
-  showOnboarding();
-}
-
-/* ==========================================================
-   初回設定
-   ========================================================== */
-
-function completeOnboarding(form) {
-  const input = form.elements.goal;
-  const errorElement = document.getElementById("onboarding-error");
-  const title = input.value.trim();
-
-  if (!title) {
-    showFieldError(errorElement, input, "今年叶えたいことを入力してください");
-    return;
-  }
-  clearFieldError(errorElement, input);
-
-  appData.goal = { title, reason: "", feeling: "" };
-  appData.startDate = appData.startDate || getToday();
-  if (!saveData()) return;
-
-  showApp();
-  showView("today");
+  startOnboarding();
 }
 
 /* ==========================================================
@@ -814,42 +1484,41 @@ function handleClick(event) {
   const target = event.target.closest("[data-action]");
   if (!target) return;
 
-  switch (target.dataset.action) {
-    case "navigate":
+  const actions = {
+    navigate: () => {
       if (target.dataset.target === "calendar" && ui.view !== "calendar") resetCalendarToCurrentMonth();
+      if (target.dataset.target === "plan") ui.isEditingPlan = false;
       showView(target.dataset.target);
-      break;
-    case "toggle-complete":
-      toggleTaskComplete();
-      break;
-    case "edit-task":
-      startEditTodayTask();
-      break;
-    case "cancel-edit-task":
-      cancelEditTodayTask();
-      break;
-    case "prev-month":
-      moveCalendarMonth(-1);
-      break;
-    case "next-month":
-      moveCalendarMonth(1);
-      break;
-    case "current-month":
+    },
+    "select-option": () => selectDailyOption(target.dataset.slot),
+    "rotate-item": rotateTodayItem,
+    reselect: reselectOption,
+    "use-mini-task": createMiniTask,
+    "restore-normal": restoreNormalTask,
+    "prev-month": () => moveCalendarMonth(-1),
+    "next-month": () => moveCalendarMonth(1),
+    "current-month": () => {
       resetCalendarToCurrentMonth();
       renderCalendar();
-      break;
-    case "open-day":
-      openDayDetail(target.dataset.date);
-      break;
-    case "close-dialog":
-      closeDayDetail();
-      break;
-    case "reset-data":
-      resetAllData();
-      break;
-    default:
-      break;
-  }
+    },
+    "open-day": () => openDayDetail(target.dataset.date),
+    "close-dialog": closeDayDetail,
+    "edit-plan": () => {
+      ui.isEditingPlan = true;
+      renderPlan();
+      el.planBody.querySelector("input").focus();
+    },
+    "cancel-plan": () => {
+      ui.isEditingPlan = false;
+      renderPlan();
+    },
+    "reset-data": resetAllData,
+    "ob-add-area": addOnboardingArea,
+    "ob-back": () => handleOnboardingBack(target.dataset.step),
+    "start-next-season": startNextSeason,
+    "rest-season": restSeason
+  };
+  if (actions[target.dataset.action]) actions[target.dataset.action]();
 }
 
 function handleSubmit(event) {
@@ -857,42 +1526,39 @@ function handleSubmit(event) {
   if (!form) return;
   event.preventDefault();
 
-  switch (form.dataset.form) {
-    case "onboarding":
-      completeOnboarding(form);
-      break;
-    case "today-task":
-      saveTodayTask(form);
-      break;
-    case "today-answer":
-      saveDailyAnswer(form);
-      break;
-    case "day-record":
-      saveDayRecord(form);
-      break;
-    case "goal":
-      saveGoal(form);
-      break;
-    default:
-      break;
-  }
+  const handlers = {
+    "ob-areas": submitOnboardingAreas,
+    "ob-first": submitOnboardingFirst,
+    "ob-problem": submitOnboardingProblem,
+    "ob-outcome": submitOnboardingOutcome,
+    "today-result": saveTodayResult,
+    "day-result": saveDayResult,
+    "plan-edit": savePlan,
+    "final-review": saveFinalReview
+  };
+  if (handlers[form.dataset.form]) handlers[form.dataset.form](form);
+}
+
+function handleChange(event) {
+  const target = event.target;
+  if (target.name === "status") handleStatusChange(target);
+  if (target.name === "outcome") handleOutcomeChange(target);
 }
 
 /* 日付をまたいでアプリに戻ってきたときは、新しい日の画面にする */
 function handleVisibilityChange() {
   if (document.visibilityState !== "visible" || el.app.hidden) return;
   if (getToday() === ui.renderedToday) return;
-
-  ui.isEditingTodayTask = false;
   if (ui.view === "today") renderToday();
   if (ui.view === "calendar") renderCalendar();
-  if (ui.view === "goal") renderProgress();
+  if (ui.view === "plan") renderPlan();
   ui.renderedToday = getToday();
 }
 
 function bindEvents() {
   document.addEventListener("click", handleClick);
   document.addEventListener("submit", handleSubmit);
+  document.addEventListener("change", handleChange);
   document.addEventListener("visibilitychange", handleVisibilityChange);
 
   /* ダイアログの外側を押したら閉じる */
@@ -907,14 +1573,9 @@ function bindEvents() {
 
 function init() {
   bindEvents();
-
-  if (!appData.goal) {
-    showOnboarding();
+  if (!appData.challenge) {
+    startOnboarding();
     return;
-  }
-  if (!appData.startDate) {
-    appData.startDate = getToday();
-    saveData();
   }
   showApp();
   showView("today");

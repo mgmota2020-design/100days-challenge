@@ -330,7 +330,7 @@ button {
   border-radius: 50%;
   color: var(--accent);
   font-family: var(--font-serif);
-  transform: rotate(-6deg);
+  text-align: center;
   transition: background-color 0.3s, color 0.3s;
 }
 
@@ -380,13 +380,6 @@ button {
   line-height: 1.6;
 }
 
-.goal-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-
 /* ---------- Today: task (最も目立たせる) ---------- */
 
 .task-card {
@@ -415,71 +408,6 @@ button {
   word-break: break-word;
 }
 
-.task-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.task-form .task-heading {
-  margin-bottom: 0;
-  font-size: 1.2rem;
-  color: var(--text);
-  font-family: var(--font-serif);
-}
-
-.task-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.check-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 22px 8px 12px;
-  border: 1.5px solid var(--accent);
-  border-radius: 999px;
-  background: #fff;
-  font-weight: 700;
-  font-size: 1.05rem;
-}
-
-.check-box {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1.5px solid var(--accent);
-  border-radius: 8px;
-  color: transparent;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.check-button[aria-pressed="true"] {
-  background: var(--accent);
-  color: #fff;
-}
-
-.check-button[aria-pressed="true"] .check-box {
-  border-color: #fff;
-  background: #fff;
-  color: var(--accent);
-}
-
-.task-done-note {
-  margin-top: 14px;
-  color: var(--accent);
-  font-weight: 500;
-}
-
 /* ---------- Today: question ---------- */
 
 .question-card {
@@ -505,11 +433,6 @@ button {
   font-size: 1.2rem;
   font-weight: 700;
   line-height: 1.6;
-}
-
-.saved-note {
-  color: var(--sub-text);
-  font-size: 0.9rem;
 }
 
 /* ---------- Calendar ---------- */
@@ -631,14 +554,6 @@ button {
   line-height: 1;
 }
 
-.mark-answer {
-  display: inline-block;
-  width: 10px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--text);
-}
-
 .calendar-legend {
   display: flex;
   flex-wrap: wrap;
@@ -707,24 +622,6 @@ button {
   gap: 18px;
 }
 
-.check-field {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-}
-
-.check-field input {
-  width: 24px;
-  height: 24px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.check-field label {
-  font-weight: 700;
-}
-
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -766,19 +663,6 @@ button {
   background: var(--card);
 }
 
-.progress-days {
-  font-family: var(--font-serif);
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--accent);
-}
-
-.progress-days small {
-  font-size: 1rem;
-  color: var(--sub-text);
-}
-
 .progress-stats {
   display: flex;
   flex-wrap: wrap;
@@ -801,38 +685,6 @@ button {
   margin: 0;
   font-weight: 700;
   font-size: 1.1rem;
-}
-
-/* 100マスの記録 */
-.day-grid {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 5px;
-  margin-top: 18px;
-}
-
-.day-grid span {
-  aspect-ratio: 1;
-  border-radius: 3px;
-  background: var(--soft);
-}
-
-.day-grid span.is-passed {
-  background: #dcd7cc;
-}
-
-.day-grid span.is-done {
-  background: var(--accent);
-}
-
-.day-grid span.is-today {
-  box-shadow: 0 0 0 1.5px var(--text);
-}
-
-.progress-start {
-  margin-top: 14px;
-  color: var(--sub-text);
-  font-size: 0.85rem;
 }
 
 .goal-form {
@@ -983,4 +835,582 @@ button {
   .stamp-number {
     font-size: 2.1rem;
   }
+}
+
+/* ==========================================================
+   片付けコーチ
+   ========================================================== */
+
+.coach-lead {
+  margin-bottom: 4px;
+  color: var(--sub-text);
+  font-size: 0.95rem;
+}
+
+.coach-details {
+  margin-top: 10px;
+  line-height: 1.8;
+}
+
+.coach-minutes {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 2px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--sub-text);
+  font-size: 0.9rem;
+}
+
+.status-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.status-group legend {
+  margin-bottom: 10px;
+  padding: 0;
+}
+
+.status-option {
+  position: relative;
+  display: block;
+}
+
+.status-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.status-option span {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 10px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* 選択中は枠・背景・丸印の3つで示す（色だけに頼らない） */
+.status-option span::before {
+  content: "";
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--sub-text);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.status-option input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
+.status-option input:checked + span::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 4px #fff;
+}
+
+.status-option input:focus-visible + span {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.coach-saved {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.coach-history {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--soft);
+}
+
+.setting-note {
+  color: var(--sub-text);
+  font-size: 0.9rem;
+}
+
+/* ==========================================================
+   3か月片付けコーチ
+   ========================================================== */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.button--small {
+  min-height: 44px;
+  padding: 6px 10px;
+  font-size: 0.9rem;
+}
+
+/* ---------- オンボーディング ---------- */
+
+.onboarding-step {
+  margin-top: 6px;
+  color: var(--sub-text);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+}
+
+.onboarding-inner .onboarding-title {
+  margin: 12px 0 10px;
+}
+
+.onboarding-inner .onboarding-title span {
+  display: inline-block;
+}
+
+.onboarding-inner .onboarding-title:focus {
+  outline: none;
+}
+
+.onboarding-lead {
+  margin-bottom: 28px;
+  color: var(--sub-text);
+}
+
+.onboarding-note {
+  margin: -16px 0 24px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: var(--soft);
+  color: var(--sub-text);
+  font-size: 0.9rem;
+}
+
+.onboarding-form .status-group {
+  margin-top: 8px;
+}
+
+.add-area-button {
+  align-self: flex-start;
+  text-decoration: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.onboarding-actions .button--primary {
+  flex: 1;
+  max-width: 280px;
+}
+
+/* ---------- 今日：A/B ---------- */
+
+.today-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.today-body:empty {
+  display: none;
+}
+
+.choice-heading {
+  margin-bottom: 14px;
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.choice-heading:focus {
+  outline: none;
+}
+
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.option-card {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  transition: border-color 0.15s;
+}
+
+.option-card:hover,
+.option-card:focus-within {
+  border-color: var(--accent);
+}
+
+.option-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
+  min-height: 88px;
+  padding: 20px 18px 18px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: none;
+  text-align: left;
+}
+
+.option-select:focus-visible {
+  outline-offset: -3px;
+}
+
+/* A/B は DAY スタンプと同じ「印」の形 */
+.option-slot {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  color: var(--accent);
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.option-title {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.option-lead {
+  color: var(--sub-text);
+  font-size: 0.9rem;
+}
+
+.option-headline {
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.option-minutes {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 1px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--sub-text);
+  font-size: 0.85rem;
+}
+
+.option-extra {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -10px;
+  padding: 0 10px 6px;
+}
+
+/* ---------- 今日：選んだあと ---------- */
+
+.task-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+
+.task-card-top .task-heading {
+  margin-bottom: 0;
+}
+
+.option-chip {
+  color: var(--sub-text);
+  font-size: 0.85rem;
+}
+
+.coach-finish {
+  margin-top: 10px;
+  font-weight: 500;
+}
+
+.task-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 12px -8px -8px;
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.chip-group legend {
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.chip {
+  position: relative;
+  display: inline-block;
+}
+
+.chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.chip input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+
+.chip input:checked + span::before {
+  content: "✓";
+  margin-right: 6px;
+  color: var(--accent);
+}
+
+.chip input:focus-visible + span {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 3か月の終わり ---------- */
+
+.final-card .task-text {
+  font-family: var(--font-serif);
+}
+
+.final-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 22px;
+}
+
+.final-actions {
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+/* ---------- カレンダー ---------- */
+
+.cal-day.is-partial .cal-date {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.mark-partial {
+  color: var(--accent);
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+.legend-mark.mark-partial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  opacity: 1;
+}
+
+.history-gap {
+  margin-top: 10px;
+}
+
+.legacy-block {
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* ---------- 3か月画面 ---------- */
+
+.plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.plan-label {
+  color: var(--sub-text);
+  font-size: 0.85rem;
+}
+
+.plan-period {
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--accent);
+}
+
+.progress-bar {
+  height: 8px;
+  margin-top: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--soft);
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.plan-section-title {
+  margin-bottom: 10px;
+  padding: 0;
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.area-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.area-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.area-mark {
+  flex-shrink: 0;
+  width: 22px;
+  color: var(--accent);
+  font-weight: 700;
+  text-align: center;
+}
+
+.area-row--upcoming .area-mark {
+  color: var(--sub-text);
+}
+
+.area-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.area-row--done .area-name {
+  color: var(--sub-text);
+}
+
+.area-status {
+  flex-shrink: 0;
+  color: var(--sub-text);
+  font-size: 0.85rem;
+}
+
+.area-row--active .area-status {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.plan-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+}
+
+.plan-facts dt {
+  color: var(--sub-text);
+  font-size: 0.85rem;
+}
+
+.plan-facts dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.plan-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.final-card .plan-facts {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
