@@ -73,6 +73,16 @@
         <h1 class="view-title" id="plan-heading">3か月のプラン</h1>
         <div class="plan-body" id="plan-body"></div>
 
+        <div class="backup-zone">
+          <h2 class="backup-zone-title">データのバックアップ</h2>
+          <p class="backup-zone-note">端末やURLを変える前に、記録をJSONファイルに保存できます。</p>
+          <div class="backup-actions">
+            <button class="button button--secondary" type="button" data-action="export-data">データを書き出す</button>
+            <button class="button button--secondary" type="button" data-action="import-data">データを読み込む</button>
+          </div>
+          <input class="visually-hidden" id="import-data-file" type="file" accept="application/json,.json" aria-label="バックアップJSONファイルを選択">
+        </div>
+
         <div class="danger-zone">
           <button class="button button--danger" type="button" data-action="reset-data">データをリセット</button>
         </div>

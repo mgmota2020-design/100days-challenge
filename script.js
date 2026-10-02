@@ -10,6 +10,8 @@ const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 const AREA_PLACEHOLDERS = ["例：ダイニングテーブル", "例：リビングの床", "例：クローゼット"];
 const FINAL_EASIER_CHOICES = ["物が減った", "探し物が減った", "片付けが早くなった", "戻しやすくなった", "まだよく分からない"];
 
+let storageLoadFailed = false;
+
 /* ==========================================================
    日付ユーティリティ（すべてローカル時間で扱う）
    ========================================================== */
@@ -253,8 +255,21 @@ function loadData() {
   try {
     return normalizeData(JSON.parse(raw));
   } catch (error) {
+    storageLoadFailed = true;
     return createEmptyData();
   }
+}
+
+function isValidBackupData(raw) {
+  if (!isPlainObject(raw) || !isPlainObject(raw.records)) return false;
+  const challenge = normalizeChallenge(raw.challenge);
+  if (!challenge || raw.startDate !== challenge.startDate) return false;
+
+  return Object.keys(raw.records).every((dateKey) => {
+    if (!isValidDateKey(dateKey)) return false;
+    const record = normalizeRecord(raw.records[dateKey]);
+    return Boolean(record);
+  });
 }
 
 function saveData() {
@@ -316,6 +331,7 @@ const el = {
   currentMonthRow: document.getElementById("current-month-row"),
 
   planBody: document.getElementById("plan-body"),
+  importDataFile: document.getElementById("import-data-file"),
 
   dayDialog: document.getElementById("day-dialog"),
   dayDialogTitle: document.getElementById("day-dialog-title"),
@@ -419,6 +435,81 @@ function startOnboarding() {
   el.app.hidden = true;
   el.onboarding.hidden = false;
   renderOnboarding();
+}
+
+function showStorageLoadError() {
+  el.app.hidden = true;
+  el.onboarding.hidden = false;
+  el.onboardingBody.innerHTML = `
+    <p class="brand">3 MONTHS</p>
+    <h1 class="onboarding-title">保存データを読み込めませんでした</h1>
+    <p class="onboarding-lead">元の保存データは変更せず、そのまま残しています。</p>
+    <div class="onboarding-actions">
+      <button class="button button--secondary" type="button" data-action="import-data">データを読み込む</button>
+    </div>`;
+}
+
+function exportData() {
+  let saved;
+  try {
+    saved = localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    showToast("データを書き出せませんでした");
+    return;
+  }
+  if (!saved) {
+    showToast("書き出すデータがありません");
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (!isValidBackupData(parsed)) throw new Error("Invalid backup data");
+    const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `cleanup-coach-backup-${getToday()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast("データを書き出しました");
+  } catch (error) {
+    showToast("データを書き出せませんでした");
+  }
+}
+
+function chooseImportFile() {
+  el.importDataFile.value = "";
+  el.importDataFile.click();
+}
+
+function importDataFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    let imported;
+    try {
+      imported = JSON.parse(reader.result);
+      if (!isValidBackupData(imported)) throw new Error("Invalid backup data");
+    } catch (error) {
+      showToast("このバックアップは読み込めませんでした");
+      return;
+    }
+
+    const confirmed = window.confirm("現在のデータを、選択したバックアップに置き換えます");
+    if (!confirmed) return;
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(imported));
+      window.location.reload();
+    } catch (error) {
+      showToast("このバックアップは読み込めませんでした");
+    }
+  });
+  reader.addEventListener("error", () => showToast("このバックアップは読み込めませんでした"));
+  reader.readAsText(file);
 }
 
 function renderOnboarding() {
@@ -1513,6 +1604,8 @@ function handleClick(event) {
       renderPlan();
     },
     "reset-data": resetAllData,
+    "export-data": exportData,
+    "import-data": chooseImportFile,
     "ob-add-area": addOnboardingArea,
     "ob-back": () => handleOnboardingBack(target.dataset.step),
     "start-next-season": startNextSeason,
@@ -1569,10 +1662,15 @@ function bindEvents() {
     event.preventDefault();
     closeDayDetail();
   });
+  el.importDataFile.addEventListener("change", () => importDataFile(el.importDataFile.files[0]));
 }
 
 function init() {
   bindEvents();
+  if (storageLoadFailed) {
+    showStorageLoadError();
+    return;
+  }
   if (!appData.challenge) {
     startOnboarding();
     return;
