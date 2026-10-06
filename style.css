@@ -298,6 +298,25 @@ button {
   margin-top: 10px;
 }
 
+.onboarding-start-date {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.onboarding-start-date-value {
+  margin-top: 4px;
+}
+
+.onboarding-start-date .button {
+  margin-top: 4px;
+  padding-left: 0;
+}
+
+.onboarding-start-date .field {
+  margin-top: 10px;
+}
+
 /* ---------- Today: header ---------- */
 
 .today-header {
@@ -1090,6 +1109,15 @@ button {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.weekend-lead {
+  margin-top: 6px;
+  color: var(--sub-text);
+}
+
+.weekend-normal-link {
+  margin-top: 12px;
 }
 
 .option-card {

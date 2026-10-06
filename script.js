@@ -53,6 +53,11 @@ function addDays(dateKey, amount) {
   return formatLocalDate(date);
 }
 
+function isWeekendDate(dateKey) {
+  const day = parseDateKey(dateKey).getDay();
+  return day === 0 || day === 6;
+}
+
 /* 終了日は「開始日の3か月後の前日」。月末をまたぐ日は、その月の最終日にそろえる */
 function getChallengeEndDate(startKey) {
   const [year, month, day] = startKey.split("-").map(Number);
@@ -431,7 +436,16 @@ function renderNavigation() {
    ========================================================== */
 
 function startOnboarding() {
-  ui.onboarding = { step: "areas", areas: [""], firstIndex: 0, problem: "", outcome: "", outcomeCustom: "" };
+  ui.onboarding = {
+    step: "areas",
+    areas: [""],
+    firstIndex: 0,
+    problem: "",
+    outcome: "",
+    outcomeCustom: "",
+    startDate: getToday(),
+    startDateExpanded: false
+  };
   el.app.hidden = true;
   el.onboarding.hidden = false;
   renderOnboarding();
@@ -603,6 +617,17 @@ function renderOnboardingOutcome(state) {
         <label class="field-label" for="ob-outcome-custom">どうなっていたら嬉しい？</label>
         <input class="text-input" id="ob-outcome-custom" name="outcomeCustom" type="text" maxlength="60" autocomplete="off" value="${escapeHtml(state.outcomeCustom)}">
       </div>
+      <div class="onboarding-start-date">
+        <p class="field-label">開始日</p>
+        <p class="onboarding-start-date-value">${formatJapaneseDate(state.startDate, false)}${state.startDate === getToday() ? "（今日）" : ""}</p>
+        ${state.startDateExpanded ? `
+          <div class="field">
+            <label class="visually-hidden" for="ob-start-date">開始日を選ぶ</label>
+            <input class="text-input" id="ob-start-date" name="startDate" type="date" value="${state.startDate}" max="${getToday()}">
+          </div>` : `
+          <button class="button button--text" type="button" data-action="ob-change-start-date">開始日を変更</button>
+          <input type="hidden" name="startDate" value="${state.startDate}">`}
+      </div>
       <p class="field-error" role="alert" hidden></p>
       <div class="onboarding-actions">
         <button class="button button--text" type="button" data-action="ob-back" data-step="problem">戻る</button>
@@ -665,6 +690,7 @@ function submitOnboardingProblem(form) {
 function submitOnboardingOutcome(form) {
   const checked = form.querySelector('input[name="outcome"]:checked');
   const custom = form.elements.outcomeCustom.value.trim();
+  const startDate = form.elements.startDate.value;
   if (!checked) {
     showFormError(form, "ひとつ選んでください", form.querySelector('input[name="outcome"]'));
     return;
@@ -673,18 +699,23 @@ function submitOnboardingOutcome(form) {
     showFormError(form, "どうなっていたら嬉しいか、ひとことで書いてください", form.elements.outcomeCustom);
     return;
   }
+  if (!isValidDateKey(startDate) || startDate > getToday()) {
+    showFormError(form, "開始日は今日以前の日付を選んでください", form.elements.startDate);
+    return;
+  }
   ui.onboarding.outcome = checked.value;
   ui.onboarding.outcomeCustom = checked.value === "other" ? custom : "";
+  ui.onboarding.startDate = startDate;
   startChallenge(ui.onboarding);
 }
 
 function startChallenge(state) {
-  const todayKey = getToday();
+  const startDate = state.startDate || getToday();
   const areas = state.areas.map((name, index) => ({
     id: `area-${index + 1}`,
     name,
     status: index === state.firstIndex ? "active" : "upcoming",
-    startedDate: index === state.firstIndex ? todayKey : null,
+    startedDate: index === state.firstIndex ? startDate : null,
     completedDate: null,
     lastReviewedDate: null
   }));
@@ -692,8 +723,8 @@ function startChallenge(state) {
   appData.challenge = {
     type: CHALLENGE_TYPE,
     mode: "cleanup",
-    startDate: todayKey,
-    endDate: getChallengeEndDate(todayKey),
+    startDate,
+    endDate: getChallengeEndDate(startDate),
     primaryProblem: state.problem,
     targetOutcome: state.outcome,
     targetOutcomeCustom: state.outcomeCustom,
@@ -702,7 +733,7 @@ function startChallenge(state) {
     finalReview: null,
     resting: false
   };
-  if (!appData.startDate) appData.startDate = todayKey;
+  appData.startDate = startDate;
   if (!saveData()) return;
 
   ui.onboarding = null;
@@ -747,7 +778,8 @@ function ensureTodayOptions(todayKey) {
   if (existing && isChallengeRecord(existing)) return;
 
   updateAreaState(appData, todayKey);
-  const options = generateDailyOptions(appData, todayKey);
+  const weekend = isWeekendDate(todayKey);
+  const options = weekend ? generateWeekendOptions(appData, todayKey) : generateDailyOptions(appData, todayKey);
   const record = {
     task: "",
     completed: false,
@@ -762,7 +794,11 @@ function ensureTodayOptions(todayKey) {
     bQueue: options.bQueue,
     bIndex: options.bIndex,
     bShown: options.bShown,
-    coachMeta: { source: COACH_SOURCE, seasonStartDate: challenge.startDate }
+    coachMeta: {
+      source: COACH_SOURCE,
+      seasonStartDate: challenge.startDate,
+      mode: weekend ? "weekend-mini" : "weekday"
+    }
   };
   /* 旧バージョンで今日の記録がすでにある場合は、消さずに残しておく */
   if (existing) {
@@ -826,13 +862,16 @@ function renderOptionCard(record, slot) {
 }
 
 function renderChoiceView(record) {
+  const weekendMini = isWeekendMiniRecord(record);
   return `
     <section class="choice" aria-labelledby="choice-heading">
-      <h2 class="choice-heading" id="choice-heading">今日はどっちにする？</h2>
+      <h2 class="choice-heading" id="choice-heading">${weekendMini ? "週末は、少しだけ" : "今日はどっちにする？"}</h2>
+      ${weekendMini ? '<p class="weekend-lead">できそうなものだけで大丈夫です</p>' : ""}
       <div class="option-list">
         ${renderOptionCard(record, "A")}
         ${renderOptionCard(record, "B")}
       </div>
+      ${weekendMini ? '<button class="button button--text weekend-normal-link" type="button" data-action="use-weekend-normal">通常版をやる</button>' : ""}
     </section>`;
 }
 
@@ -849,9 +888,14 @@ function renderSelectedView(record) {
   const option = getSelectedEffectiveOption(record);
   const base = record.dailyOptions[record.selectedOption];
   const locked = Boolean(record.resultStatus);
+  const weekendMini = isWeekendMiniRecord(record);
   let actions = "";
   if (!locked) {
-    actions = `
+    actions = weekendMini ? `
+      <div class="task-card-actions">
+        <button class="button button--text" type="button" data-action="use-weekend-normal">通常版をやる</button>
+        <button class="button button--text" type="button" data-action="reselect">選び直す</button>
+      </div>` : `
       <div class="task-card-actions">
         ${record.miniActive
           ? '<button class="button button--text" type="button" data-action="restore-normal">通常版に戻す</button>'
@@ -880,6 +924,34 @@ function renderSelectedView(record) {
         ${record.resultStatus ? `<p class="coach-saved" role="status">${getSavedMessage(record.resultStatus)}</p>` : ""}
       </form>
     </div>`;
+}
+
+function useWeekendNormal() {
+  const todayKey = getToday();
+  const record = getRecord(todayKey);
+  if (!isChallengeRecord(record) || !isWeekendMiniRecord(record) || record.resultStatus) return;
+  updateAreaState(appData, todayKey);
+  const options = generateDailyOptions(appData, todayKey);
+  record.dailyOptions = { A: options.A, B: options.B };
+  record.selectedOption = null;
+  record.resultStatus = null;
+  record.miniActive = false;
+  record.usedMiniTask = false;
+  record.task = "";
+  record.question = "";
+  record.answer = "";
+  record.responseData = {};
+  record.bQueue = options.bQueue;
+  record.bIndex = options.bIndex;
+  record.bShown = options.bShown;
+  record.coachMeta.mode = "weekend-normal";
+  if (!saveData()) return;
+  renderToday();
+  const heading = document.getElementById("choice-heading");
+  if (heading) {
+    heading.setAttribute("tabindex", "-1");
+    heading.focus();
+  }
 }
 
 /* 結果の3択と、必要なときだけの追加の1問 */
@@ -1607,7 +1679,18 @@ function handleClick(event) {
     "export-data": exportData,
     "import-data": chooseImportFile,
     "ob-add-area": addOnboardingArea,
+    "ob-change-start-date": () => {
+      const form = target.closest("form");
+      const outcome = form && form.querySelector('input[name="outcome"]:checked');
+      if (outcome) ui.onboarding.outcome = outcome.value;
+      if (form && form.elements.outcomeCustom) ui.onboarding.outcomeCustom = form.elements.outcomeCustom.value.trim();
+      ui.onboarding.startDateExpanded = true;
+      renderOnboarding();
+      const input = document.getElementById("ob-start-date");
+      if (input) input.focus();
+    },
     "ob-back": () => handleOnboardingBack(target.dataset.step),
+    "use-weekend-normal": useWeekendNormal,
     "start-next-season": startNextSeason,
     "rest-season": restSeason
   };
@@ -1636,6 +1719,9 @@ function handleChange(event) {
   const target = event.target;
   if (target.name === "status") handleStatusChange(target);
   if (target.name === "outcome") handleOutcomeChange(target);
+  if (target.name === "startDate" && isValidDateKey(target.value) && target.value <= getToday()) {
+    ui.onboarding.startDate = target.value;
+  }
 }
 
 /* 日付をまたいでアプリに戻ってきたときは、新しい日の画面にする */

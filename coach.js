@@ -348,11 +348,16 @@ function isChallengeRecord(record) {
   return Boolean(record && record.dailyOptions && record.dailyOptions.A && record.dailyOptions.B);
 }
 
+function isWeekendMiniRecord(record) {
+  return Boolean(record && record.coachMeta && record.coachMeta.mode === "weekend-mini");
+}
+
 function getSeasonHistory(data, beforeDate) {
   const challenge = data.challenge;
   if (!challenge) return [];
   return Object.keys(data.records)
-    .filter((dateKey) => dateKey >= challenge.startDate && dateKey < beforeDate && isChallengeRecord(data.records[dateKey]))
+    .filter((dateKey) => dateKey >= challenge.startDate && dateKey < beforeDate
+      && isChallengeRecord(data.records[dateKey]) && !isWeekendMiniRecord(data.records[dateKey]))
     .sort()
     .map((dateKey) => ({ date: dateKey, record: data.records[dateKey] }));
 }
@@ -371,19 +376,31 @@ function getSelectedEffectiveOption(record) {
   return record.selectedOption ? getEffectiveOption(record, record.selectedOption) : null;
 }
 
-/* 前回の結果。選ばれなかった日・結果がない日は「できなかった」と同じく小さくする */
+/* 前回、ユーザーが明示的に保存した通常結果。未選択・未保存の日は分岐に使わない */
 function getPreviousResult(history) {
-  if (!history.length) return null;
-  const { date, record } = history[history.length - 1];
-  const slot = record.selectedOption || "A";
+  const answered = history.filter((entry) => entry.record.resultStatus && entry.record.selectedOption);
+  if (!answered.length) return null;
+  const { date, record } = answered[answered.length - 1];
+  const slot = record.selectedOption;
   return {
     date,
     record,
     slot,
-    selected: Boolean(record.selectedOption),
-    status: record.resultStatus || "not_done",
+    selected: true,
+    status: record.resultStatus,
     option: getEffectiveOption(record, slot)
   };
+}
+
+/* 最後の保存結果から今日までに、結果を残さず過ぎた平日の数 */
+function countMissedWeekdays(fromDate, toDate) {
+  let count = 0;
+  let cursor = addDays(fromDate, 1);
+  while (cursor < toDate) {
+    if (!isWeekendDate(cursor)) count += 1;
+    cursor = addDays(cursor, 1);
+  }
+  return count;
 }
 
 function getAreaById(challenge, areaId) {
@@ -529,7 +546,7 @@ function generateDailyOptions(data, dateKey) {
   const challenge = data.challenge;
   const history = getSeasonHistory(data, dateKey);
   const answered = history.filter((entry) => entry.record.resultStatus);
-  const lastActiveDate = answered.length ? answered[answered.length - 1].date : challenge.startDate;
+  const lastActiveDate = answered.length ? answered[answered.length - 1].date : null;
   const context = {
     data,
     dateKey,
@@ -538,7 +555,7 @@ function generateDailyOptions(data, dateKey) {
     previous: getPreviousResult(history),
     lastAnswered: answered.length ? answered[answered.length - 1] : null,
     challengeDay: daysBetween(challenge.startDate, dateKey) + 1,
-    isRestart: history.length > 0 && daysBetween(lastActiveDate, dateKey) >= RESTART_GAP_DAYS
+    isRestart: Boolean(lastActiveDate) && countMissedWeekdays(lastActiveDate, dateKey) >= RESTART_GAP_DAYS
   };
 
   const A = generateAreaOption(context);
@@ -547,6 +564,37 @@ function generateDailyOptions(data, dateKey) {
   const B = generateItemOption(getItemById(first.id), first.size, first.miniLevel, first.lead);
 
   return { A, B, bQueue: bPlan.queue, bIndex: 0, bShown: [first.id] };
+}
+
+/* 土日は通常進行と分離した、1〜3分の補助タスクを出す */
+function generateWeekendOptions(data, dateKey) {
+  const challenge = data.challenge;
+  const current = getCurrentArea(challenge)
+    || [...challenge.areas].reverse().find((area) => area.status === "done")
+    || challenge.areas[0];
+  const normal = generateDailyOptions(data, dateKey);
+  const item = getItemById(normal.B.itemId);
+  const A = makeOption({
+    slot: "A",
+    kind: "weekend-mini",
+    size: "mini",
+    areaId: current ? current.id : "",
+    areaName: current ? current.name : "",
+    title: "重点エリアを少しだけ",
+    headline: current
+      ? `${quote(current.name)}から、戻せる物を1〜3個だけ戻そう。`
+      : "目についた物を1〜3個だけ、元の場所に戻そう。",
+    finish: "1つでも戻せたら今日は終了。",
+    estimatedMinutes: 2,
+    followUp: null
+  });
+  const B = generateItemOption(item, "mini", 1, "");
+  B.title = "モノを3個だけ見る";
+  B.headline = `${item.name}を3個だけ見てみよう。`;
+  B.finish = "3個見たら今日は終了。";
+  B.estimatedMinutes = 2;
+  B.mini = null;
+  return { A, B, bQueue: [], bIndex: 0, bShown: [item.id] };
 }
 
 /* 「別のモノにする」：候補を順番に進める */
